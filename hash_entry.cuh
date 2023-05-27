@@ -2,8 +2,11 @@
 #define HASH_TYPES_H
 
 
+// Defined in the problem. The hash size is 32 and the maximum password characters is 16
 #define SALT_LENGTH 32
-#define MAX_PASSWORD_LENGTH 16
+// #define MAX_PASSWORD_LENGTH 16
+
+#define MAX_PASSWORD_LENGTH 5
 
 #define MAX_INPUT_LENGTH (SALT_LENGTH + MAX_PASSWORD_LENGTH)
 

@@ -5,31 +5,23 @@
 #include <sys/time.h>
 #include <pthread.h>
 #include <locale.h>
+
 #include "sha256.cuh"
 #include "hash_entry.cuh"
 
-// 87ca8c12fbc9e7686c13c6269ffce93fb66d78a002638c95edc471ed41d46f8e:2609ad21084c3cc3e64f0e6777466000
 
-#define HASH "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92"
-// #define HASH "6cea8869d44eefacc4b56d300905b9aa770503b46cca36f7cec9b36c8bb45ded"
-// #define HASH "87ca8c12fbc9e7686c13c6269ffce93fb66d78a002638c95edc471ed41d46f8e"
-#define HASH_LEN 256
-#define TEXT ""
-#define TEXT_LEN 0
-#define THREADS 1
+#define THREADS 1500
 // #define THREADS 1500
-#define BLOCKS 1
+#define BLOCKS 256
 // #define BLOCKS 256
 #define GPUS 1
-#define DIFFICULTY 4
-#define RANDOM_LEN 6
 
-// Defined in the problem. The hash size is 32 and the maximum password characters is 16
+#define THREAD_EXECUTION_ITERATIONS 20
 
-// #define CHARSET_SIZE 66
-// __constant__ BYTE characterSet[CHARSET_SIZE + 1] = {"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890%*$@"};
-#define CHARSET_SIZE 6
-__constant__ BYTE characterSet[CHARSET_SIZE + 1] = {"123456"};
+#define CHARSET_LENGTH 66
+__constant__ BYTE charset[CHARSET_LENGTH + 1] = {"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890%*$@"};
+
+char* g_solution;
 
 __host__ __device__ void print_hash_entry(hash_entry entry) {
 	printf("Hash: ");
@@ -47,53 +39,57 @@ __device__ unsigned long deviceRandomGen(unsigned long x) {
 }
 
 __global__ void sha256_cuda(hash_entry *entry, int *blockContainsSolution, unsigned long baseSeed) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  SHA256_CTX ctx;
-  BYTE digest[32];
-  // BYTE random[RANDOM_LEN];
-  BYTE total[TEXT_LEN + RANDOM_LEN + 1] = "123456";
-  unsigned long seed = baseSeed;
-  seed += (unsigned long) i;
+  int id = blockIdx.x * blockDim.x + threadIdx.x;
+  unsigned long seed = deviceRandomGen(baseSeed + id);
 
-	print_hash_entry(*entry);
+	int password_size = (seed % MAX_PASSWORD_LENGTH - 1) + 2;
 
-  // memcpy(total, prefix, TEXT_LEN * sizeof(char));
+	BYTE input[SALT_LENGTH + MAX_PASSWORD_LENGTH];
+	memcpy(input, entry->salt, SALT_LENGTH);
 
-  //for (int j = 0; j < TEXT_LEN; j++) {
-  //	total[j] = prefix[j];
-  //}
-  // for (int j = 0; j < RANDOM_LEN; j++) {
-  //     seed = deviceRandomGen(seed);
-  //     int randomIdx = (int) (seed % CHARSET_SIZE);
-  //     total[TEXT_LEN + j] = characterSet[randomIdx];
-  // }
+	SHA256_CTX sha_ctx;
+	BYTE digest[32];
 
-  // total[6] = (char) "\0";
-  sha256_init(&ctx);
-  sha256_update(&ctx, total, 6);
-  sha256_final(&ctx, digest);
-  for (size_t i = 0; i < 32; i++) {
-    printf("%02x", digest[i]);
-  }
-  printf("\n");
+	int found;
 
-  for (int j = 0; j < HASH_LEN; j--) {
-    if (digest[j] != HASH[j]) {
-      return;
-    }
-  }
-  printf("Pera aí que parece igual %s %s\n", digest, HASH);
+	for (int i = 0; i < password_size; i++) {
+		seed = deviceRandomGen(seed);
+		input[SALT_LENGTH + i] = charset[seed % CHARSET_LENGTH];
+	}
 
-  for (int j = 0; j < DIFFICULTY; j++)
-      if (digest[j] > 0)
-          return;
-  if ((digest[DIFFICULTY] & 0xF0) > 0)
-      return;
-  if (*blockContainsSolution == 1)
-      return;
-  *blockContainsSolution = 1;
-  // for (int j = 0; j < RANDOM_LEN; j++)
-  //     solution[j] = random[j];
+	for (int x = 0; x < THREAD_EXECUTION_ITERATIONS; x++) {
+		seed = deviceRandomGen(seed);
+		input[SALT_LENGTH + (seed % password_size)] = charset[seed % CHARSET_LENGTH];
+		seed = deviceRandomGen(seed);
+		input[SALT_LENGTH + (seed % password_size)] = charset[seed % CHARSET_LENGTH];
+
+		sha256_init(&sha_ctx);
+		// sha256_update(&sha_ctx, input, (SALT_LENGTH);
+		sha256_update(&sha_ctx, input, (SALT_LENGTH + password_size));
+		sha256_final(&sha_ctx, digest);
+
+		found = 1;
+		for (int i = 0; i < HASH_BYTES_LENGTH; i++) {
+			if (digest[i] != entry->hash_bytes[i]) {
+				found = 0;
+				break;
+			}
+		}
+
+		if (found) {
+			break;
+		}
+	}
+
+	if (found) {
+		for (int i = 0; i < password_size; i++) {
+			entry->solution[i] = input[SALT_LENGTH + i];
+		}
+		for (int i = password_size; i < MAX_PASSWORD_LENGTH; i++) {
+			entry->solution[i] = '\0';
+		}
+		*blockContainsSolution = 1;
+	}
 }
 
 void hostRandomGen(unsigned long *x) {
@@ -120,7 +116,6 @@ struct HandlerInput {
 typedef struct HandlerInput HandlerInput;
 
 pthread_mutex_t solutionLock;
-BYTE *solution;
 
 void *launchGPUHandlerThread(void *vargp) {
   HandlerInput *hi = (HandlerInput *) vargp;
@@ -132,40 +127,31 @@ void *launchGPUHandlerThread(void *vargp) {
 	cudaMalloc(&d_hash_entry, sizeof(hash_entry));
 	cudaMemcpy(d_hash_entry, &(hi->entry), sizeof(hash_entry), cudaMemcpyHostToDevice);
 
-  int blockContainsSolution = -1;
+  int blockContainsSolution = 0;
   int *d_blockContainsSolution;
   cudaMalloc(&d_blockContainsSolution, sizeof(int));
 	cudaMemcpy(&blockContainsSolution, d_blockContainsSolution, sizeof(int), cudaMemcpyHostToDevice);
 
   unsigned long rngSeed = timems();
 
-  while (1) {
-    hostRandomGen(&rngSeed);
+  // while (1) {
+	srand(rngSeed);
+  for (int i = 0; i < 30000; i++) {
+		rngSeed = rand();
 
-    hi->hashesProcessed += THREADS * BLOCKS;
+    hi->hashesProcessed += THREADS * BLOCKS * THREAD_EXECUTION_ITERATIONS;
     sha256_cuda<<<THREADS, BLOCKS>>>(d_hash_entry, d_blockContainsSolution, rngSeed);
     cudaDeviceSynchronize();
 
     cudaMemcpy(&blockContainsSolution, d_blockContainsSolution, sizeof(int), cudaMemcpyDeviceToHost);
 
 		if (blockContainsSolution == 1) {
-			printf("UEEE ACHOU A SOLUTION\n");
-			char* solution;
-      cudaMemcpy(solution, d_hash_entry->solution, sizeof(char) * MAX_PASSWORD_LENGTH, cudaMemcpyDeviceToHost);
-			printf("Solution: %s", solution);
+			char* solution = (char*) malloc(sizeof(char) * MAX_PASSWORD_LENGTH);
+      cudaMemcpy(solution, &(d_hash_entry->solution), sizeof(char) * MAX_PASSWORD_LENGTH, cudaMemcpyDeviceToHost);
+			printf("\nSolution: %s\n", solution);
 			exit(1);
+			break;
 		}
-    // if (*blockContainsSolution == 1) {
-    //   cudaMemcpy(blockSolution, d_solution, sizeof(BYTE) * RANDOM_LEN, cudaMemcpyDeviceToHost);
-    //   solution = blockSolution;
-    //   pthread_mutex_unlock(&solutionLock);
-    //   break;
-    // }
-		break;
-
-    if (solution) {
-      break;
-    }
   }
 
   cudaDeviceReset();
@@ -183,8 +169,10 @@ int main() {
 	setlocale(LC_NUMERIC, "");
 
 	hash_entry line;
-	hexToBytes("27a575da417e1e4cdbf4fbbe8752579b6e1d65e79731ed773a6886812e2da116", line.hash_bytes);
-	strncpy(line.salt, "3354623a2c1deaed1362f124c75db8a7", SALT_LENGTH);
+	// hexToBytes("27a575da417e1e4cdbf4fbbe8752579b6e1d65e79731ed773a6886812e2da116", line.hash_bytes);
+	// strncpy(line.salt, "3354623a2c1deaed1362f124c75db8a7", SALT_LENGTH);
+	hexToBytes("6cea8869d44eefacc4b56d300905b9aa770503b46cca36f7cec9b36c8bb45ded", line.hash_bytes);
+	strncpy(line.salt, "2609ad21084c3cc3e64f0e6777466000", SALT_LENGTH);
 	print_hash_entry(line);
 
 	pthread_mutex_init(&solutionLock, NULL);
@@ -203,17 +191,19 @@ int main() {
     usleep(10);
 	}
 
-	while (1) {
+	// while (1) {
+	usleep(100000);
+	for (int i = 0; i < 300000; i++) {
+		usleep(1000);
 		unsigned long totalProcessed = 0;
 		for (int i = 0; i < GPUS; i++) {
 			totalProcessed += *(processedPtrs[i]);
 		}
 		long long elapsed = timems() - start;
 		printf("Hashes (%'lu) Seconds (%'f) Hashes/sec (%'lu)\r", totalProcessed, ((float) elapsed) / 1000.0, (unsigned long) ((double) totalProcessed / (double) elapsed) * 1000);
-		if (solution) {
+		if (g_solution) {
 			break;
 		}
-		usleep(2000);
 	}
 	printf("\n");
 
@@ -230,7 +220,7 @@ int main() {
 		totalProcessed += *(processedPtrs[i]);
 	}
 
-	printf("Solution: %.20s\n", solution);
+	printf("Solution: %s\n", g_solution);
 	printf("Hashes processed: %'lu\n", totalProcessed);
 	printf("Time: %llu\n", elapsed);
 	printf("Hashes/sec: %'lu\n", (unsigned long) ((double) totalProcessed / (double) elapsed) * 1000);
