@@ -1,9 +1,9 @@
 CC := nvcc
-CFLAGS := 
+CFLAGS :=
 
 # Add additional CUDA flags if needed
 # -arch=sm_XX
-CUDA_FLAGS := 
+CUDA_FLAGS :=
 
 # Add additional include directories if needed
 INC_DIRS :=
@@ -14,11 +14,13 @@ LIB_DIRS :=
 # Add additional libraries if needed
 LIBS :=
 
-SRCS := $(wildcard src/*.cu)
 OBJ_DIR := obj
+PROFILE_DIR := profile
+
+SRCS := $(wildcard src/*.cu)
+HDRS := $(wildcard src/*.cuh)
 OBJS := $(patsubst src/%.cu,$(OBJ_DIR)/%.o,$(SRCS))
 EXEC := sha256-password-cracker
-PROFILE_DIR := profile
 
 .PHONY: all clean
 
@@ -27,7 +29,7 @@ all: $(EXEC)
 $(EXEC): $(OBJS)
 	$(CC) $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) $(LIB_DIRS) -o $@ $^ $(LIBS)
 
-$(OBJ_DIR)/%.o: src/%.cu
+$(OBJ_DIR)/%.o: src/%.cu $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) -c $< -o $@
 

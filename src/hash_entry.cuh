@@ -8,7 +8,7 @@
 
 #define MAX_PASSWORD_LENGTH 16
 
-#define MIN_PASSWORD_CHECK 6
+#define MIN_PASSWORD_CHECK 4
 
 #define MAX_INPUT_LENGTH (SALT_LENGTH + MAX_PASSWORD_LENGTH)
 
@@ -18,10 +18,20 @@
 
 
 typedef struct hash_entry {
-	BYTE hash_bytes[HASH_BYTES_LENGTH];
-	BYTE salt[SALT_LENGTH];
+	unsigned char hash_bytes[HASH_BYTES_LENGTH];
+	unsigned char salt[SALT_LENGTH];
 	char solution[MAX_PASSWORD_LENGTH];
 } hash_entry;
 
 
-#endif
+void read_entries_from_file(const char* filepath, hash_entry** entries, int* size);
+
+void init_hash_entry(hash_entry* entry, const char hash_bytes[HASH_BYTES_LENGTH], const char salt[SALT_LENGTH]);
+
+void print_hash_entry(hash_entry entry);
+
+void hex_to_bytes(const char* hex_string, unsigned char bytes[HASH_BYTES_LENGTH]);
+
+
+
+#endif  // HASH_TYPES_H
