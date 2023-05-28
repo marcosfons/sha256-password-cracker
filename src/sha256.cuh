@@ -167,6 +167,8 @@ __device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_t len)
 		// ctx->data == message 512 bit chunk
 		ctx->data[ctx->datalen] = data[i];
 		ctx->datalen++;
+
+		// TODO: ALERT This is only because I know that the data will be less than 64
 		//if (ctx->datalen == 64) {
 		//	sha256_transform(ctx, ctx->data);
 		//	ctx->bitlen += 512;
@@ -181,19 +183,20 @@ __device__ void sha256_final(SHA256_CTX *ctx, BYTE hash[])
 
 	i = ctx->datalen;
 
+	// TODO: ALERT This is only because I know that the data will be less than 56
 	// Pad whatever data is left in the buffer.
-	if (ctx->datalen < 56) {
+	// if (ctx->datalen < 56) {
 		ctx->data[i++] = 0x80;
 		while (i < 56)
 			ctx->data[i++] = 0x00;
-	}
-	else {
-		ctx->data[i++] = 0x80;
-		while (i < 64)
-			ctx->data[i++] = 0x00;
-		sha256_transform(ctx, ctx->data);
-		memset(ctx->data, 0, 56);
-	}
+	// }
+	// else {
+	// 	ctx->data[i++] = 0x80;
+	// 	while (i < 64)
+	// 		ctx->data[i++] = 0x00;
+	// 	sha256_transform(ctx, ctx->data);
+	// 	memset(ctx->data, 0, 56);
+	// }
 
 	// Append to the padding the total message's length in bits and transform.
 	ctx->bitlen += ctx->datalen * 8;
@@ -209,6 +212,7 @@ __device__ void sha256_final(SHA256_CTX *ctx, BYTE hash[])
 
 	// Since this implementation uses little endian byte ordering and SHA uses big endian,
 	// reverse all the bytes when copying the final state to the output hash.
+	#pragma unroll 4
 	for (i = 0; i < 4; ++i) {
 		hash[i] = (ctx->state[0] >> (24 - i * 8)) & 0x000000ff;
 		hash[i + 4] = (ctx->state[1] >> (24 - i * 8)) & 0x000000ff;

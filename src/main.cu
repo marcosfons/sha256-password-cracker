@@ -10,15 +10,17 @@
 #include "hash_entry.cuh"
 
 
-#define THREADS 1500
+// #define THREADS 512
+#define THREADS 16
 // #define THREADS 1500
-#define BLOCKS 256
+// #define BLOCKS 32
+#define BLOCKS 4
 // #define BLOCKS 256
 #define GPUS 1
 
-#define THREAD_EXECUTION_ITERATIONS 20
+#define THREAD_EXECUTION_ITERATIONS ((MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK))
 
-#define CHARSET_LENGTH 66
+#define CHARSET_LENGTH 68
 __constant__ BYTE charset[CHARSET_LENGTH + 1] = {"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890%*$@"};
 
 char* g_solution;
@@ -38,34 +40,27 @@ __device__ unsigned long deviceRandomGen(unsigned long x) {
   return x;
 }
 
-__global__ void sha256_cuda(hash_entry *entry, int *blockContainsSolution, unsigned long baseSeed) {
+__global__ void sha256_cuda(hash_entry *entry, unsigned char *blockContainsSolution, unsigned long baseSeed) {
   int id = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long seed = deviceRandomGen(baseSeed + id);
 
-	int password_size = (seed % MAX_PASSWORD_LENGTH - 1) + 2;
-
-	BYTE input[SALT_LENGTH + MAX_PASSWORD_LENGTH];
-	memcpy(input, entry->salt, SALT_LENGTH);
+	BYTE input[MAX_PASSWORD_LENGTH];
 
 	SHA256_CTX sha_ctx;
 	BYTE digest[32];
 
 	int found;
-
-	for (int i = 0; i < password_size; i++) {
+	
+	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
 		seed = deviceRandomGen(seed);
-		input[SALT_LENGTH + i] = charset[seed % CHARSET_LENGTH];
+		input[i] = charset[seed % CHARSET_LENGTH];
 	}
 
-	for (int x = 0; x < THREAD_EXECUTION_ITERATIONS; x++) {
-		seed = deviceRandomGen(seed);
-		input[SALT_LENGTH + (seed % password_size)] = charset[seed % CHARSET_LENGTH];
-		seed = deviceRandomGen(seed);
-		input[SALT_LENGTH + (seed % password_size)] = charset[seed % CHARSET_LENGTH];
-
+	for (int x = MIN_PASSWORD_CHECK; x < MAX_PASSWORD_LENGTH; x++) {
 		sha256_init(&sha_ctx);
-		// sha256_update(&sha_ctx, input, (SALT_LENGTH);
-		sha256_update(&sha_ctx, input, (SALT_LENGTH + password_size));
+		sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
+		sha256_update(&sha_ctx, input, (x % MAX_PASSWORD_LENGTH) + 1);
+		sha256_update(&sha_ctx, "\n", 1);
 		sha256_final(&sha_ctx, digest);
 
 		found = 1;
@@ -77,18 +72,11 @@ __global__ void sha256_cuda(hash_entry *entry, int *blockContainsSolution, unsig
 		}
 
 		if (found) {
-			break;
+			for (int i = 0; i < x + 1; i++) {
+				entry->solution[i] = input[i];
+			}
+			*blockContainsSolution = 1;
 		}
-	}
-
-	if (found) {
-		for (int i = 0; i < password_size; i++) {
-			entry->solution[i] = input[SALT_LENGTH + i];
-		}
-		for (int i = password_size; i < MAX_PASSWORD_LENGTH; i++) {
-			entry->solution[i] = '\0';
-		}
-		*blockContainsSolution = 1;
 	}
 }
 
@@ -110,7 +98,7 @@ long long timems() {
 
 struct HandlerInput {
   int device;
-  unsigned long hashesProcessed;
+  unsigned long long hashesProcessed;
 	hash_entry entry;
 };
 typedef struct HandlerInput HandlerInput;
@@ -127,23 +115,26 @@ void *launchGPUHandlerThread(void *vargp) {
 	cudaMalloc(&d_hash_entry, sizeof(hash_entry));
 	cudaMemcpy(d_hash_entry, &(hi->entry), sizeof(hash_entry), cudaMemcpyHostToDevice);
 
-  int blockContainsSolution = 0;
-  int *d_blockContainsSolution;
-  cudaMalloc(&d_blockContainsSolution, sizeof(int));
-	cudaMemcpy(&blockContainsSolution, d_blockContainsSolution, sizeof(int), cudaMemcpyHostToDevice);
+  unsigned char blockContainsSolution = 0;
+  unsigned char *d_blockContainsSolution;
+  cudaMalloc(&d_blockContainsSolution, sizeof(unsigned char));
+	cudaMemcpy(&blockContainsSolution, d_blockContainsSolution, sizeof(unsigned char), cudaMemcpyHostToDevice);
 
   unsigned long rngSeed = timems();
 
   // while (1) {
 	srand(rngSeed);
-  for (int i = 0; i < 30000; i++) {
+  while (1) {
 		rngSeed = rand();
 
-    hi->hashesProcessed += THREADS * BLOCKS * THREAD_EXECUTION_ITERATIONS;
+    hi->hashesProcessed += ((unsigned long long) (THREADS * BLOCKS * THREAD_EXECUTION_ITERATIONS)) * 8193;
     sha256_cuda<<<THREADS, BLOCKS>>>(d_hash_entry, d_blockContainsSolution, rngSeed);
+		for (int i = 0; i < 8192; i++) {
+			sha256_cuda<<<THREADS, BLOCKS>>>(d_hash_entry, d_blockContainsSolution, rand());
+		}
     cudaDeviceSynchronize();
 
-    cudaMemcpy(&blockContainsSolution, d_blockContainsSolution, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&blockContainsSolution, d_blockContainsSolution, sizeof(unsigned char), cudaMemcpyDeviceToHost);
 
 		if (blockContainsSolution == 1) {
 			char* solution = (char*) malloc(sizeof(char) * MAX_PASSWORD_LENGTH);
@@ -169,16 +160,25 @@ int main() {
 	setlocale(LC_NUMERIC, "");
 
 	hash_entry line;
+	memset(line.solution, 0, MAX_PASSWORD_LENGTH);
+	// Admin0
 	// hexToBytes("27a575da417e1e4cdbf4fbbe8752579b6e1d65e79731ed773a6886812e2da116", line.hash_bytes);
-	// strncpy(line.salt, "3354623a2c1deaed1362f124c75db8a7", SALT_LENGTH);
-	hexToBytes("6cea8869d44eefacc4b56d300905b9aa770503b46cca36f7cec9b36c8bb45ded", line.hash_bytes);
-	strncpy(line.salt, "2609ad21084c3cc3e64f0e6777466000", SALT_LENGTH);
+	// strncpy((char*) line.salt, "3354623a2c1deaed1362f124c75db8a7", SALT_LENGTH);
+
+	// teste
+	// hexToBytes("6cea8869d44eefacc4b56d300905b9aa770503b46cca36f7cec9b36c8bb45ded", line.hash_bytes);
+	// strncpy((char*) line.salt, "2609ad21084c3cc3e64f0e6777466000", SALT_LENGTH);
+
+	// userC eu acho
+	hexToBytes("e57e3489a84e3ad626608378bde5b0873b85c8bef443998d6bb1d3f2a6c7d0bc", line.hash_bytes);
+	strncpy((char*) line.salt, "5958d4968fc679958e32c0b22d625856", SALT_LENGTH);
+
 	print_hash_entry(line);
 
 	pthread_mutex_init(&solutionLock, NULL);
 	pthread_mutex_lock(&solutionLock);
 
-	unsigned long **processedPtrs = (unsigned long **) malloc(sizeof(unsigned long *) * GPUS);
+	unsigned long long **processedPtrs = (unsigned long long **) malloc(sizeof(unsigned long long *) * GPUS);
 	pthread_t *tids = (pthread_t *) malloc(sizeof(pthread_t) * GPUS);
 	long long start = timems();
 	for (int i = 0; i < GPUS; i++) {
@@ -193,8 +193,8 @@ int main() {
 
 	// while (1) {
 	usleep(100000);
-	for (int i = 0; i < 300000; i++) {
-		usleep(1000);
+	while (1) {
+		usleep(10000);
 		unsigned long totalProcessed = 0;
 		for (int i = 0; i < GPUS; i++) {
 			totalProcessed += *(processedPtrs[i]);

@@ -6,7 +6,9 @@
 #define SALT_LENGTH 32
 // #define MAX_PASSWORD_LENGTH 16
 
-#define MAX_PASSWORD_LENGTH 5
+#define MAX_PASSWORD_LENGTH 16
+
+#define MIN_PASSWORD_CHECK 6
 
 #define MAX_INPUT_LENGTH (SALT_LENGTH + MAX_PASSWORD_LENGTH)
 
@@ -17,7 +19,7 @@
 
 typedef struct hash_entry {
 	BYTE hash_bytes[HASH_BYTES_LENGTH];
-	char salt[SALT_LENGTH];
+	BYTE salt[SALT_LENGTH];
 	char solution[MAX_PASSWORD_LENGTH];
 } hash_entry;
 
