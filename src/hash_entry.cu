@@ -27,9 +27,6 @@ void read_entries_from_file(const char* filepath, hash_entry** entries, int* siz
 		char* salt = strtok(NULL, "\n");  // Get the remaining part of the line (salt)
 
 		if (hash != NULL && salt != NULL) {
-			hash_entry entry;
-			init_hash_entry(&entry, hash, salt);
-
 			*size += 1;
 			*entries = (hash_entry*) realloc(*entries, sizeof(hash_entry) * (*size));
 			if (*entries == NULL) {
@@ -38,7 +35,7 @@ void read_entries_from_file(const char* filepath, hash_entry** entries, int* siz
 					return;
 			}
 
-			(*entries)[*size - 1] = entry;
+			init_hash_entry((*entries) + (*size - 1), hash, salt);
 		}
 	}
 

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <cuda.h>
+#include <stddef.h>
 #include <sys/time.h>
 #include <pthread.h>
 #include <locale.h>
@@ -12,21 +13,28 @@
 
 
 // #define THREADS 512
-#define THREADS 2048
+// #define THREADS 2048
+#define THREADS 12
 // #define THREADS 1500
 // #define BLOCKS 32
-#define BLOCKS 16
+#define BLOCKS 4
 // #define BLOCKS 256
 #define GPUS 1
 
 #define THREAD_EXECUTION_ITERATIONS ((MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK))
 
+// __constant__ char charset[] = {
+//     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+//     'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
+//     'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+//     'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '1', '2', '3', '4',
+//     '5', '6', '7', '8', '9', '0', '%', '*', '$', '@'};
+
 __constant__ char charset[] = {
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
     'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
-    'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
-    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '1', '2', '3', '4',
-    '5', '6', '7', '8', '9', '0', '%', '*', '$', '@'};
+    };
+
 __constant__ const int CHARSET_LENGTH = sizeof(charset) / sizeof(char);
 
 typedef struct handler_input {
@@ -49,16 +57,16 @@ __device__ unsigned long deviceRandomGen(unsigned long x) {
   return x;
 }
 
-__global__ void sha256_cuda(hash_entry *entries, int current, unsigned char *blockContainsSolution, unsigned long baseSeed) {
+__global__ void sha256_cuda(hash_entry* entry, int entries_count, unsigned char *blockContainsSolution, unsigned long baseSeed) {
   int id = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long seed = deviceRandomGen(baseSeed + id);
+
+	hash_entry* entry = entry[blockIdx.x % entries_count];
 
 	SHA256_CTX sha_ctx;
 	BYTE digest[32];
 	BYTE input[MAX_PASSWORD_LENGTH];
 	int found;
-
-	hash_entry* entry = entries + current;
 	
 	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
 		seed = deviceRandomGen(seed);
@@ -68,7 +76,7 @@ __global__ void sha256_cuda(hash_entry *entries, int current, unsigned char *blo
 	for (int x = MIN_PASSWORD_CHECK; x < MAX_PASSWORD_LENGTH; x++) {
 		sha256_init(&sha_ctx);
 		sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
-		sha256_update(&sha_ctx, input, (x % MAX_PASSWORD_LENGTH) + 1);
+		sha256_update(&sha_ctx, input, x);
 		sha256_final(&sha_ctx, digest);
 
 		found = 1;
@@ -80,7 +88,7 @@ __global__ void sha256_cuda(hash_entry *entries, int current, unsigned char *blo
 		}
 
 		if (found) {
-			for (int i = 0; i < x + 1; i++) {
+			for (int i = 0; i < x; i++) {
 				entry->solution[i] = input[i];
 			}
 			*blockContainsSolution = 1;
@@ -95,10 +103,6 @@ void *launchGPUHandlerThread(void *vargp) {
 	// Pre SHA-256
   cudaMemcpyToSymbol(dev_k, host_k, sizeof(host_k), 0, cudaMemcpyHostToDevice);
 
-	hash_entry *d_hash_entry;
-	cudaMalloc(&d_hash_entry, sizeof(hash_entry) * hi->entries_count);
-	cudaMemcpy(d_hash_entry, hi->entries, sizeof(hash_entry) * hi->entries_count, cudaMemcpyHostToDevice);
-
   unsigned char blockContainsSolution = 0;
   unsigned char *d_blockContainsSolution;
   cudaMalloc(&d_blockContainsSolution, sizeof(unsigned char));
@@ -106,18 +110,25 @@ void *launchGPUHandlerThread(void *vargp) {
 
 	int current = 0; 
 	srand(timems() * timems());
+
+	hash_entry *d_hash_entry;
+	cudaMalloc(&d_hash_entry, sizeof(hash_entry) * hi->entries_count);
+	cudaMemcpy(d_hash_entry, &(hi->entries[current]), sizeof(hash_entry) * hi->entries_count, cudaMemcpyHostToDevice);
+
+	int j = 1;
+
   while (1) {
-		for (int i = 0; i < 1024; i++) {
-			sha256_cuda<<<THREADS, BLOCKS>>>(d_hash_entry, current, d_blockContainsSolution, rand());
+		for (int i = 0; i < 32; i++) {
+			sha256_cuda<<<THREADS, BLOCKS>>>(d_hash_entry, d_blockContainsSolution, rand());
 		}
     cudaDeviceSynchronize();
-    hi->hashesProcessed += ((unsigned long long) (THREADS * BLOCKS * THREAD_EXECUTION_ITERATIONS)) * (1024);
+    hi->hashesProcessed += ((unsigned long long) (THREADS * BLOCKS * THREAD_EXECUTION_ITERATIONS)) * (32);
 		
     cudaMemcpy(&blockContainsSolution, d_blockContainsSolution, sizeof(unsigned char), cudaMemcpyDeviceToHost);
 
 		if (blockContainsSolution) {
 			srand(timems() * timems());
-      cudaMemcpy(hi->entries[current].solution, &(d_hash_entry->solution), sizeof(char) * MAX_PASSWORD_LENGTH, cudaMemcpyDeviceToHost);
+			cudaMemcpy(hi->entries[current].solution, &(d_hash_entry->solution), sizeof(char) * MAX_PASSWORD_LENGTH, cudaMemcpyDeviceToHost);
 
 			printf("\n\nSolution:\n");
 			print_hash_entry(hi->entries[current]);
@@ -126,10 +137,18 @@ void *launchGPUHandlerThread(void *vargp) {
 			current += 1;
 			cudaMemset(d_blockContainsSolution, 0, sizeof(unsigned char));
 
+			cudaMemcpy(d_hash_entry, &(hi->entries[current]), sizeof(hash_entry), cudaMemcpyHostToDevice);
+
 			if (current >= hi->entries_count) {
 				cudaDeviceReset();
-				exit(1);
+				exit(0);
 			}
+		}
+		j++;
+		if ((j % 340) == 0) {
+			printf("Breaking\n");
+			usleep(6000000);
+			j = 1;
 		}
   }
 
@@ -173,7 +192,8 @@ int main() {
 	}
 
 	while (1) {
-		usleep(1000);
+		usleep(100000);
+		// usleep(1000);
 		unsigned long totalProcessed = 0;
 		for (int i = 0; i < GPUS; i++) {
 			totalProcessed += *(processedPtrs[i]);

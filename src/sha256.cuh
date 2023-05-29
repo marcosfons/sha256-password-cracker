@@ -49,8 +49,8 @@ static const WORD host_k[64] = {
 
 /*********************** FUNCTION DECLARATIONS **********************/
 char * print_sha(BYTE * buff);
-__device__ void sha256_init(SHA256_CTX *ctx);
-__device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_t len);
+__host__ __device__ void sha256_init(SHA256_CTX *ctx);
+__host__ __device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_t len);
 __device__ void sha256_final(SHA256_CTX *ctx, BYTE hash[]);
 
 
@@ -144,7 +144,7 @@ __device__ void sha256_transform(SHA256_CTX *ctx, const BYTE data[])
 	ctx->state[7] += h;
 }
 
-__device__ void sha256_init(SHA256_CTX *ctx)
+__host__ __device__ void sha256_init(SHA256_CTX *ctx)
 {
 	ctx->datalen = 0;
 	ctx->bitlen = 0;
@@ -158,7 +158,7 @@ __device__ void sha256_init(SHA256_CTX *ctx)
 	ctx->state[7] = 0x5be0cd19;
 }
 
-__device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_t len)
+__host__ __device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_t len)
 {
 	WORD i;
 

@@ -33,9 +33,14 @@ $(OBJ_DIR)/%.o: src/%.cu $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) -c $< -o $@
 
+# profile: CFLAGS +=-g
+profile: CUDA_FLAGS +=-lineinfo
 profile: $(EXEC)
 	mkdir -p $(PROFILE_DIR)
-	nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S`.qdrep ./$(EXEC)
+	# nvprof ./$(EXEC)
+	# sudo nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
+	# sudo ncu -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
+	/usr/local/NVIDIA-Nsight-Compute/nv-nsight-cu-cli -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
 
 clean:
 	rm -rf $(EXEC) $(OBJ_DIR) $(PROFILE_DIR)
