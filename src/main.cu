@@ -12,28 +12,56 @@
 #include "cuda_devices.cuh"
 
 
-// #define THREADS 512
-// #define THREADS 2048
-#define THREADS 12
-// #define THREADS 1500
-// #define BLOCKS 32
-#define BLOCKS 4
-// #define BLOCKS 256
+// Current stage
+#define DEBUG
+// #define TEST
+// #define RELEASE
+
 #define GPUS 1
+
+#ifdef DEBUG
+#define BLOCKS 16
+#define THREADS 10
+#define RUNS_PER_ITERATION 16
+#define PRINT_STATUS_DELAY 10000
+#endif
+
+#ifdef TEST
+#define BLOCKS 32
+#define THREADS 30
+#define RUNS_PER_ITERATION 32
+#define PRINT_STATUS_DELAY 100000
+#endif
+
+#ifdef RELEASE
+#define BLOCKS 32
+#define THREADS 2048
+#define RUNS_PER_ITERATION 32
+#define PRINT_STATUS_DELAY 100000
+#endif
 
 #define THREAD_EXECUTION_ITERATIONS ((MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK))
 
-// __constant__ char charset[] = {
-//     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
-//     'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
-//     'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
-//     'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '1', '2', '3', '4',
-//     '5', '6', '7', '8', '9', '0', '%', '*', '$', '@'};
+#ifdef DEBUG
+__constant__ char charset[] = {'t', 'e', 's', 'a', 'b', 'c',
+                               'd', 'f', 'g', 'h', 'i', 'j'};
+#endif
 
+#ifdef TEST
 __constant__ char charset[] = {
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
     'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
-    };
+};
+#endif
+
+#ifdef RELEASE
+__constant__ char charset[] = {
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+    'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
+    'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '1', '2', '3', '4',
+    '5', '6', '7', '8', '9', '0', '%', '*', '$', '@'};
+#endif
 
 __constant__ const int CHARSET_LENGTH = sizeof(charset) / sizeof(char);
 
@@ -57,11 +85,14 @@ __device__ unsigned long deviceRandomGen(unsigned long x) {
   return x;
 }
 
-__global__ void sha256_cuda(hash_entry* entry, int entries_count, unsigned char *blockContainsSolution, unsigned long baseSeed) {
+__global__ void sha256_cuda(hash_entry *entries, int entries_count,
+                            unsigned char *blockContainsSolution,
+                            unsigned long baseSeed) {
   int id = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned long seed = deviceRandomGen(baseSeed + id);
 
-	hash_entry* entry = entry[blockIdx.x % entries_count];
+	int entry_pos = (blockIdx.x % entries_count);
+	hash_entry* entry = entries + entry_pos;
 
 	SHA256_CTX sha_ctx;
 	BYTE digest[32];
@@ -91,9 +122,41 @@ __global__ void sha256_cuda(hash_entry* entry, int entries_count, unsigned char 
 			for (int i = 0; i < x; i++) {
 				entry->solution[i] = input[i];
 			}
-			*blockContainsSolution = 1;
+			blockContainsSolution[entry_pos] = 1;
 		}
 	}
+}
+
+void reorganize_not_solved_entries(hash_entry *entries,
+                                   unsigned char *contains_solution,
+                                   int entries_total, int *current_total,
+                                   unsigned char *d_blockContainsSolution,
+                                   hash_entry *d_hash_entry) {
+	// This will place solved entries into the end of the list
+	// It will change the CPU (host) variables in the launchGPUHandlerThread function
+	for (int i = 0; i < *current_total; i++) {
+		if (contains_solution[i]) {
+			// SWAP
+			int final_index = (*current_total) - 1;
+			hash_entry entry_copy = entries[i];
+			unsigned char contains_solution_copy = contains_solution[i];
+
+			entries[i] = entries[final_index];
+			contains_solution[i] = contains_solution[final_index];
+
+			entries[final_index] = entry_copy;
+			contains_solution[final_index] = contains_solution_copy;
+
+			*current_total = *current_total - 1;
+		}
+	}
+
+	// Still needs to update the GPU (device) variables to reflect those
+	// changes For the blockContainsSolution we can only set all to zero.
+	// Because the rest will be not accessed. It sets already entries_count
+	// because it easier, and it will happen not frequently
+	cudaMemset(d_blockContainsSolution, 0, sizeof(unsigned char) * (entries_total));
+	cudaMemcpy(d_hash_entry, entries, sizeof(hash_entry) * (entries_total), cudaMemcpyHostToDevice);
 }
 
 void *launchGPUHandlerThread(void *vargp) {
@@ -103,52 +166,70 @@ void *launchGPUHandlerThread(void *vargp) {
 	// Pre SHA-256
   cudaMemcpyToSymbol(dev_k, host_k, sizeof(host_k), 0, cudaMemcpyHostToDevice);
 
-  unsigned char blockContainsSolution = 0;
+	int current_total = hi->entries_count;
+	
+  unsigned char *blockContainsSolution = (unsigned char*) malloc(sizeof(unsigned char) * current_total);
   unsigned char *d_blockContainsSolution;
-  cudaMalloc(&d_blockContainsSolution, sizeof(unsigned char));
-	cudaMemset(d_blockContainsSolution, 0, sizeof(unsigned char));
+  cudaMalloc(&d_blockContainsSolution, sizeof(unsigned char) * current_total);
+	cudaMemset(d_blockContainsSolution, 0, sizeof(unsigned char) * current_total);
 
-	int current = 0; 
 	srand(timems() * timems());
 
 	hash_entry *d_hash_entry;
-	cudaMalloc(&d_hash_entry, sizeof(hash_entry) * hi->entries_count);
-	cudaMemcpy(d_hash_entry, &(hi->entries[current]), sizeof(hash_entry) * hi->entries_count, cudaMemcpyHostToDevice);
+	cudaMalloc(&d_hash_entry, sizeof(hash_entry) * current_total);
+	cudaMemcpy(d_hash_entry, hi->entries, sizeof(hash_entry) * current_total, cudaMemcpyHostToDevice);
 
+#ifdef RELEASE
 	int j = 1;
+#endif
 
   while (1) {
-		for (int i = 0; i < 32; i++) {
-			sha256_cuda<<<THREADS, BLOCKS>>>(d_hash_entry, d_blockContainsSolution, rand());
+		for (int i = 0; i < RUNS_PER_ITERATION; i++) {
+			sha256_cuda<<<THREADS, BLOCKS>>>(d_hash_entry, current_total, d_blockContainsSolution, rand());
 		}
     cudaDeviceSynchronize();
-    hi->hashesProcessed += ((unsigned long long) (THREADS * BLOCKS * THREAD_EXECUTION_ITERATIONS)) * (32);
+    hi->hashesProcessed += THREADS * BLOCKS * THREAD_EXECUTION_ITERATIONS * RUNS_PER_ITERATION;
 		
-    cudaMemcpy(&blockContainsSolution, d_blockContainsSolution, sizeof(unsigned char), cudaMemcpyDeviceToHost);
+    cudaMemcpy(blockContainsSolution, d_blockContainsSolution, sizeof(unsigned char) * current_total, cudaMemcpyDeviceToHost);
 
-		if (blockContainsSolution) {
-			srand(timems() * timems());
-			cudaMemcpy(hi->entries[current].solution, &(d_hash_entry->solution), sizeof(char) * MAX_PASSWORD_LENGTH, cudaMemcpyDeviceToHost);
+		int found = 0;
+		for (int i = 0; i < current_total; i++) {
+			if (blockContainsSolution[i]) {
+				srand(timems() * timems());
+				if (!found) {
+					cudaMemcpy(hi->entries, d_hash_entry, sizeof(hash_entry) * hi->entries_count, cudaMemcpyDeviceToHost);
+				}
 
-			printf("\n\nSolution:\n");
-			print_hash_entry(hi->entries[current]);
-			printf("\n");
+				printf("\n\nSolution at %d:\n", i);
+				print_hash_entry(hi->entries[i]);
+				printf("\n");
+				found = 1;
 
-			current += 1;
-			cudaMemset(d_blockContainsSolution, 0, sizeof(unsigned char));
-
-			cudaMemcpy(d_hash_entry, &(hi->entries[current]), sizeof(hash_entry), cudaMemcpyHostToDevice);
-
-			if (current >= hi->entries_count) {
-				cudaDeviceReset();
-				exit(0);
+				if (current_total <= 0) {
+					cudaDeviceReset();
+					exit(0);
+				}
 			}
 		}
-		j++;
-		if ((j % 340) == 0) {
-			printf("Breaking\n");
-			usleep(6000000);
-			j = 1;
+#ifdef RELEASE
+			j++;
+			if ((j % 340) == 0) {
+				printf("Breaking\n");
+				usleep(6000000);
+				j = 1;
+			}
+#endif
+		if (found) {
+			reorganize_not_solved_entries(
+					hi->entries, blockContainsSolution,
+					hi->entries_count, &current_total,
+					d_blockContainsSolution, d_hash_entry);
+		
+#ifdef DEBUG
+			for (int i = 0; i < hi->entries_count; i++) {
+				print_hash_entry(hi->entries[i]);
+			}
+#endif
 		}
   }
 
@@ -175,7 +256,7 @@ int main() {
 		print_hash_entry(entries[i]);
 	}
 
-	printf("Starting to break hashes\n");
+	printf("\nStarting to break hashes\n");
 
 	unsigned long long **processedPtrs = (unsigned long long **) malloc(sizeof(unsigned long long *) * GPUS);
 	pthread_t *tids = (pthread_t *) malloc(sizeof(pthread_t) * GPUS);
@@ -192,7 +273,7 @@ int main() {
 	}
 
 	while (1) {
-		usleep(100000);
+		usleep(PRINT_STATUS_DELAY);
 		// usleep(1000);
 		unsigned long totalProcessed = 0;
 		for (int i = 0; i < GPUS; i++) {
