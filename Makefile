@@ -1,17 +1,9 @@
 CC := nvcc
 CFLAGS :=
 
-# Add additional CUDA flags if needed
-# -arch=sm_XX
 CUDA_FLAGS := --use_fast_math
-
-# Add additional include directories if needed
 INC_DIRS :=
-
-# Add additional library directories if needed
 LIB_DIRS :=
-
-# Add additional libraries if needed
 LIBS :=
 
 OBJ_DIR := obj
@@ -38,9 +30,12 @@ profile: CUDA_FLAGS +=-lineinfo
 profile: $(EXEC)
 	mkdir -p $(PROFILE_DIR)
 	# nvprof ./$(EXEC)
-	sudo nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
-	# sudo ncu -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
+	# sudo nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
+	ncu -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
 	# /usr/local/NVIDIA-Nsight-Compute/nv-nsight-cu-cli -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
+
+zip:
+	zip -r ../sha256-password-cracker.zip . -x ".git/*" "obj/*" "sha256-password-cracker"
 
 clean:
 	rm -rf $(EXEC) $(OBJ_DIR) $(PROFILE_DIR)

@@ -32,7 +32,7 @@
 
 #ifdef TEST
 #define BLOCKS 32
-#define BLOCKS_PER_ENTRY 72
+#define BLOCKS_PER_ENTRY 16
 #define THREADS 1024
 #define RUNS_PER_ITERATION 8
 #define LOOPS_INSIDE_THREAD 64
@@ -60,8 +60,10 @@ __constant__ const int CHARSET_LENGTH = sizeof(charset) / sizeof(char);
 typedef struct handler_input {
   int device;
   unsigned long long hashesProcessed;
+	unsigned long long start;
 	hash_entry* entries;
 	int entries_count;
+	unsigned char finished;
 } handler_input;
 
 long long timems() {
@@ -122,7 +124,7 @@ __global__ void sha256_cuda_all_posibilities(hash_entry *entries, int entries_co
 	// int block_offset = (blockIdx.x % BLOCKS_PER_ENTRY) * (blockDim.x * LOOPS_INSIDE_THREAD);
 	unsigned long long current = start + ( (blockIdx.x % BLOCKS_PER_ENTRY) * (blockDim.x * LOOPS_INSIDE_THREAD) ) + (threadIdx.x * LOOPS_INSIDE_THREAD);
 	// TODO(marcosfons): Change 7 to 8 characters here
-	unsigned char input[7];
+	unsigned char input[8];
 	unsigned int length;
 
 	#pragma unroll
@@ -264,41 +266,41 @@ void *launch_gpu_handler_thread(void *vargp) {
 	}
 
 
-	// SHA256_CTX *d_sha256_contexts;
-	// cudaMalloc(&d_sha256_contexts, sizeof(SHA256_CTX) * current_total);
-	// cudaMemcpy(d_sha256_contexts, contexts, sizeof(SHA256_CTX) * current_total, cudaMemcpyHostToDevice);
+	SHA256_CTX *d_sha256_contexts;
+	cudaMalloc(&d_sha256_contexts, sizeof(SHA256_CTX) * current_total);
+	cudaMemcpy(d_sha256_contexts, contexts, sizeof(SHA256_CTX) * current_total, cudaMemcpyHostToDevice);
 
 
 	#if TEST_TYPE == SEQUENTIALLY
-
-	unsigned long long start = 0;
-
-	// It only launches BLOCKS == current_total (hashes that weren't break yet)
-	// For each BLOCK it test one hash_entry
-	// It increments start with the number of THREADS per BLOCk
-	// So for each hash_entry it tests all possibilities of (start + thread_number) per call
+	hi->start = 0;
 
 	while(1) {
 		for (int i = 0; i < RUNS_PER_ITERATION; i++) {
 			sha256_cuda_all_posibilities<<<current_total * BLOCKS_PER_ENTRY, THREADS>>>(
 					d_hash_entry, current_total, d_entries_has_solution,
-					start + (THREADS * i * LOOPS_INSIDE_THREAD * BLOCKS_PER_ENTRY)
+					hi->start + (THREADS * i * LOOPS_INSIDE_THREAD * BLOCKS_PER_ENTRY)
 			);
 		}
 		cudaDeviceSynchronize();
 
-		start += RUNS_PER_ITERATION * (THREADS * LOOPS_INSIDE_THREAD) * BLOCKS_PER_ENTRY;
-		hi->hashesProcessed += RUNS_PER_ITERATION * (THREADS * LOOPS_INSIDE_THREAD) * (current_total * BLOCKS_PER_ENTRY);
+		if (hi->start > 1000000000) {
+			break;
+		}
 
 		cudaMemcpy(entries_has_solution, d_entries_has_solution, sizeof(unsigned char) * current_total, cudaMemcpyDeviceToHost);
 
 		if (check_if_solution_was_found(&entries_has_solution, d_entries_has_solution, current_total)) {
+			printf("\nSTART: %llu\n", hi->start);
 			process_after_solution_was_found(
 					hi->entries, entries_has_solution,
 					hi->entries_count, &current_total,
 					d_entries_has_solution, d_hash_entry);
 		}
+
+		hi->start += RUNS_PER_ITERATION * (THREADS * LOOPS_INSIDE_THREAD) * BLOCKS_PER_ENTRY;
+		hi->hashesProcessed += RUNS_PER_ITERATION * (THREADS * LOOPS_INSIDE_THREAD) * (current_total * BLOCKS_PER_ENTRY);
 	}
+	hi->finished = 1;
 
 	#elif TEST_TYPE == RANDOMLY
 
@@ -332,14 +334,9 @@ int main() {
 
 	show_devices_info();
 
-	printf("Starting the program\n");
-	// int entries_count = 15;
-	// hash_entry* entries = (hash_entry*) malloc(sizeof(hash_entry) * entries_count);
 	int entries_count = 0;
 	hash_entry* entries = (hash_entry*) malloc(1);
-	printf("Loading from the file\n");
-
-	printf("\n");
+	printf("Loading hashes from the file\n\n");
 
 	read_entries_from_file("data/hashes_and_salts.txt", &entries, &entries_count);
 	// read_entries_from_file("data/correct.txt", &entries, &entries_count);
@@ -355,7 +352,20 @@ int main() {
 	printf("\nStarting to break hashes\n");
 
 
+	// 6f416ce900e7a39206334a28b40f609a2984332b2b5313cdafba10e2f3d6f3a5:HFq..h :abcDef
+	// 94d72fe5153921c8b5ccee30e639025c7640ad15ed4c2c68e1eacb6d2db94139:G3m"5,N:1@2@3@4@
+	// 0a6ab9b4100383117271cd5c7ce083be7bbb669a532cc8857356315e61340abe:*3~/]cXER:passworD
+	// a775bf388c6e99f7255169afa0769b594692d86c662f294057de91a182cb416f:]x<7aV,1:p@ssw0rd
+	// 66240965684bed7ecd3ec495208364f25e964fe83aa31679f3210a5bfe32dc10:E3U:12081786
+	// c6f415b777999c168533a0a2716e6125f740235e99c03319ef0dcb1a0be06c15:?/ثFz9g馿f:00000000
+	// 69017d19f71e8e34d5a53be54ca8d4d7bc9dc6c913babe3bb1e222010eba8066:t\|p,:AbCdEfGh
+	// 12fad8a9aeb1c8ed1f988b07b32f0a9b7d7458e7c99822d1d4284bf6edcf3a3e:; 5W/g:M3t@llic@
+	// 27a575da417e1e4cdbf4fbbe8752579b6e1d65e79731ed773a6886812e2da116:3Tb:,b$]:6%Fg
+
 	unsigned long long **processedPtrs = (unsigned long long **) malloc(sizeof(unsigned long long *) * GPUS);
+	unsigned long long **singleProcessedPtrs = (unsigned long long **) malloc(sizeof(unsigned long long *) * GPUS);
+	unsigned char **finished_ptrs = (unsigned char**) malloc(sizeof(unsigned char*) * GPUS);
+
 	pthread_t *tids = (pthread_t *) malloc(sizeof(pthread_t) * GPUS);
 	unsigned long long start = timems();
 	for (int i = 0; i < GPUS; i++) {
@@ -364,29 +374,37 @@ int main() {
 		hi->hashesProcessed = 0;
 		hi->entries = entries;
 		hi->entries_count = entries_count;
+		hi->finished = 0;
 		processedPtrs[i] = &hi->hashesProcessed;
+		singleProcessedPtrs[i] = &hi->start;
+		finished_ptrs[i] = &hi->finished;
 		pthread_create(tids + i, NULL, launch_gpu_handler_thread, hi);
 	}
 
 	while (1) {
 		usleep(PRINT_STATUS_DELAY);
 		unsigned long totalProcessed = 0;
+		unsigned long singleProcesseds = 0;
+		unsigned char finished = 1;
 		for (int i = 0; i < GPUS; i++) {
+			singleProcesseds = *(singleProcessedPtrs[i]);
 			totalProcessed += *(processedPtrs[i]);
+			finished = finished && *(finished_ptrs[i]);
 		}
+
 		long long elapsed = timems() - start;
-		// Without this if, the print does not show up
-		if (23 + totalProcessed == 48) {
+		printf("Total Hashes (%'lu) Hashes per Salt (%'lu) Seconds (%'f) Hashes/sec (%'lu)     \r",
+					totalProcessed, 
+				 singleProcesseds,
+				 ((float) elapsed) / 1000.0,
+					(unsigned long) ((double) totalProcessed / (double) elapsed) * 1000);
+
+		if (finished) {
 			break;
 		}
-		printf("\rHashes (%'lu) Seconds (%'f) Hashes/sec (%'lu)     ",
-					totalProcessed, ((float) elapsed) / 1000.0,
-					(unsigned long) ((double) totalProcessed / (double) elapsed) * 1000);
 	}
-	printf("\n");
 
-	long long end = timems();
-	long long elapsed = end - start;
+	long long elapsed = timems() - start;
 
 	for (int i = 0; i < GPUS; i++) {
 		pthread_join(tids[i], NULL);
@@ -397,7 +415,7 @@ int main() {
 		totalProcessed += *(processedPtrs[i]);
 	}
 
-	printf("Hashes processed: %'lu\n", totalProcessed);
+	printf("\nHashes processed: %'lu\n", totalProcessed);
 	printf("Time: %llu\n", elapsed);
 	printf("Hashes/sec: %'lu\n", (unsigned long) ((double) totalProcessed / (double) elapsed) * 1000);
 
