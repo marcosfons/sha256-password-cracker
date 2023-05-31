@@ -3,7 +3,7 @@ CFLAGS :=
 
 # Add additional CUDA flags if needed
 # -arch=sm_XX
-CUDA_FLAGS :=
+CUDA_FLAGS := --use_fast_math
 
 # Add additional include directories if needed
 INC_DIRS :=
@@ -27,7 +27,7 @@ EXEC := sha256-password-cracker
 all: $(EXEC)
 
 $(EXEC): $(OBJS)
-	$(CC) $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) $(LIB_DIRS) -o $@ $^ $(LIBS)
+	$(CC) -O 3 $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) $(LIB_DIRS) -o $@ $^ $(LIBS)
 
 $(OBJ_DIR)/%.o: src/%.cu $(HDRS)
 	@mkdir -p $(@D)
