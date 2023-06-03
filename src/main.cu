@@ -32,11 +32,11 @@
 
 #ifdef TEST
 #define BLOCKS 32
-#define BLOCKS_PER_ENTRY 16
-#define THREADS 1024
-#define RUNS_PER_ITERATION 8
-#define LOOPS_INSIDE_THREAD 64
-#define PRINT_STATUS_DELAY 50000
+#define BLOCKS_PER_ENTRY 5
+#define THREADS 600
+#define RUNS_PER_ITERATION 1
+#define LOOPS_INSIDE_THREAD 64*10
+#define PRINT_STATUS_DELAY 10000
 #endif
 
 #ifdef RELEASE
@@ -98,7 +98,7 @@ __device__ unsigned char hash_cmp_equal(const unsigned char hash1[HASH_BYTES_LEN
 	// 				(hash1.hash_number[3]       == hash2.hash_number[3]);
 }
 
-__device__
+__host__ __device__
 int get_input_from_number(unsigned long long current, unsigned char input[8]) {
 	#pragma unroll
 	for (int i = 0; i < 8; i++) {
@@ -111,93 +111,114 @@ int get_input_from_number(unsigned long long current, unsigned char input[8]) {
 	return 0;
 }
 
-__global__ void sha256_cuda_all_posibilities(hash_entry *entries, int entries_count,
-                             unsigned char *blockContainsSolution,
-                             unsigned long long start) {
+__device__ void sha256_update_from_number(SHA256_CTX *ctx, unsigned long long current) {
+	#pragma unroll
+	for (unsigned short i = 0; i < 8; ++i) {
+		ctx->data[ctx->datalen] = charset[current % CHARSET_LENGTH];
+		ctx->datalen++;
 
-	int entry_pos = blockIdx.x / BLOCKS_PER_ENTRY;
-	hash_entry* entry = entries + entry_pos;
+		current /= CHARSET_LENGTH;
+		if (current <= 0) {
+			return;
+		}
+	}
+}
 
+__global__ void sha256_cuda_all_posibilities(
+    hash_entry *__restrict__ entries, int entries_count,
+    unsigned long long *__restrict__ solutions,
+    unsigned long long start) {
+
+	// unsigned int entry_pos = blockIdx.x / BLOCKS_PER_ENTRY;
+	hash_entry* entry = entries + (blockIdx.x / BLOCKS_PER_ENTRY);
+	// u_hash_bytes hash_bytes = entries[(blockIdx.x / BLOCKS_PER_ENTRY)].hash_bytes;
+
+	// SHA256_CTX initial = contexts[(blockIdx.x / BLOCKS_PER_ENTRY) % entries_count];
 	SHA256_CTX sha_ctx;
 	u_hash_bytes digest;
 
-	// int block_offset = (blockIdx.x % BLOCKS_PER_ENTRY) * (blockDim.x * LOOPS_INSIDE_THREAD);
 	unsigned long long current = start + ( (blockIdx.x % BLOCKS_PER_ENTRY) * (blockDim.x * LOOPS_INSIDE_THREAD) ) + (threadIdx.x * LOOPS_INSIDE_THREAD);
-	// TODO(marcosfons): Change 7 to 8 characters here
-	unsigned char input[8];
-	unsigned int length;
+	// unsigned short length;
 
 	#pragma unroll
-	for (int j = 0; j < LOOPS_INSIDE_THREAD; j++) {
-		length = get_input_from_number(current + j, input);
+	for (int j = current; j < current + LOOPS_INSIDE_THREAD; j++) {
+		// length = get_input_from_number(current + j, input);
+		// sha_ctx = initial;
 
 		sha256_init(&sha_ctx);
 		sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
-		sha256_update(&sha_ctx, input, length);
+
+		sha256_update_from_number(&sha_ctx, j);
+
+		// #pragma unroll
+		// for (unsigned short i = 0; i < SALT_LENGTH; ++i) {
+		// 	sha_ctx.data[i] = input[i];
+		// }
+		// sha_ctx.datalen = SALT_LENGTH;
+
+		// sha256_update(&sha_ctx, input, length);
 		sha256_final(&sha_ctx, digest.hash_bytes);
 
 		if (hash_cmp_equal(digest.hash_bytes, entry->hash_bytes.hash_bytes)) {
-			for (int i = 0; i < length; i++) {
-				entry->solution[i] = input[i];
-			}
-			blockContainsSolution[entry_pos] = 1;
+			solutions[(blockIdx.x / BLOCKS_PER_ENTRY)] = j;
+			break;
 		}
 	}
 }
 
-__global__ void sha256_cuda(hash_entry *entries, int entries_count,
-                            unsigned char *blockContainsSolution,
-                            unsigned long baseSeed) {
-  int id = blockIdx.x * blockDim.x + threadIdx.x;
-	int entry_pos = blockIdx.x % entries_count;
-  unsigned long seed = deviceRandomGen(baseSeed + id);
-
-	hash_entry* entry = entries + entry_pos;
-
-	SHA256_CTX sha_ctx;
-	u_hash_bytes digest;
-	BYTE input[MAX_PASSWORD_LENGTH];
-
-	#pragma unroll
-	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
-		seed = deviceRandomGen(seed);
-		input[i] = charset[seed % CHARSET_LENGTH];
-	}
-	
-	for (int input_length = MIN_PASSWORD_CHECK; input_length < MAX_PASSWORD_LENGTH; input_length++) {
-		sha256_init(&sha_ctx);
-		sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
-		sha256_update(&sha_ctx, input, input_length);
-		sha256_final(&sha_ctx, digest.hash_bytes);
-
-		if (hash_cmp_equal(digest.hash_bytes, entry->hash_bytes.hash_bytes)) {
-			for (int i = 0; i < input_length; i++) {
-				entry->solution[i] = input[i];
-			}
-			blockContainsSolution[entry_pos] = 1;
-		}
-	}
-}
-
+// __global__ void sha256_cuda(hash_entry *entries, int entries_count,
+//                             unsigned long long *blockContainsSolution,
+//                             unsigned long baseSeed) {
+//   int id = blockIdx.x * blockDim.x + threadIdx.x;
+// 	int entry_pos = blockIdx.x % entries_count;
+//   unsigned long seed = deviceRandomGen(baseSeed + id);
+//
+// 	hash_entry* entry = entries + entry_pos;
+//
+// 	SHA256_CTX sha_ctx;
+// 	u_hash_bytes digest;
+// 	BYTE input[MAX_PASSWORD_LENGTH];
+//
+// 	#pragma unroll
+// 	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
+// 		seed = deviceRandomGen(seed);
+// 		input[i] = charset[seed % CHARSET_LENGTH];
+// 	}
+// 	
+// 	for (int input_length = MIN_PASSWORD_CHECK; input_length < MAX_PASSWORD_LENGTH; input_length++) {
+// 		sha256_init(&sha_ctx);
+// 		sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
+// 		sha256_update(&sha_ctx, input, input_length);
+// 		sha256_final(&sha_ctx, digest.hash_bytes);
+//
+// 		if (hash_cmp_equal(digest.hash_bytes, entry->hash_bytes.hash_bytes)) {
+// 			for (int i = 0; i < input_length; i++) {
+// 				entry->solution[i] = input[i];
+// 			}
+// 			blockContainsSolution[entry_pos] = 1;
+// 		}
+// 	}
+// }
+//
 void reorganize_not_solved_entries(hash_entry *entries,
-                                   unsigned char *contains_solution,
+                                   unsigned long long *solutions,
                                    int entries_total, int *current_total,
-                                   unsigned char *d_blockContainsSolution,
+                                   unsigned long long *d_solutions,
                                    hash_entry *d_hash_entry) {
 	// This will place solved entries into the end of the list
 	// It will change the CPU (host) variables in the launch_gpu_handler_thread function
 	for (int i = 0; i < *current_total; i++) {
-		if (contains_solution[i]) {
+		if (solutions[i] > 0) {
 			// SWAP
 			int final_index = (*current_total) - 1;
 			hash_entry entry_copy = entries[i];
-			unsigned char contains_solution_copy = contains_solution[i];
+			unsigned long long solution_copy = solutions[i];
 
 			entries[i] = entries[final_index];
-			contains_solution[i] = contains_solution[final_index];
+			solutions[i] = solutions[final_index];
 
 			entries[final_index] = entry_copy;
-			contains_solution[final_index] = contains_solution_copy;
+			solutions[final_index] = solution_copy;
 
 			*current_total = *current_total - 1;
 		}
@@ -207,14 +228,14 @@ void reorganize_not_solved_entries(hash_entry *entries,
 	// changes For the blockContainsSolution we can only set all to zero.
 	// Because the rest will be not accessed. It sets already entries_count
 	// because it easier, and it will happen not frequently
-	cudaMemset(d_blockContainsSolution, 0, sizeof(unsigned char) * (entries_total));
+	cudaMemcpy(d_solutions, solutions, sizeof(unsigned long long) * (entries_total), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_hash_entry, entries, sizeof(hash_entry) * (entries_total), cudaMemcpyHostToDevice);
 }
 
 
-unsigned char check_if_solution_was_found(unsigned char** entries_has_solution, unsigned char* d_entries_has_solution, int current_total) {
+unsigned char check_if_solution_was_found(unsigned long long* solutions, int current_total) {
 	for (int i = 0; i < current_total; i++) {
-		if ((*entries_has_solution)[i]) {
+		if (solutions[i] > 0) {
 			return 1;
 		}
 	}
@@ -222,20 +243,24 @@ unsigned char check_if_solution_was_found(unsigned char** entries_has_solution, 
 	return 0;
 }
 
-void process_after_solution_was_found(hash_entry *entries, unsigned char *contains_solution,
+void process_after_solution_was_found(hash_entry *entries, unsigned long long *solutions,
                                    int entries_total, int *current_total,
-                                   unsigned char *d_block_contains_solution,
+                                   unsigned long long *d_solutions,
                                    hash_entry *d_hash_entry) {
 	cudaMemcpy(entries, d_hash_entry, sizeof(hash_entry) * entries_total, cudaMemcpyDeviceToHost);
 
-	reorganize_not_solved_entries(
-			entries, contains_solution,
-			entries_total, current_total,
-			d_block_contains_solution, d_hash_entry);
+	reorganize_not_solved_entries(entries, solutions, entries_total,
+																current_total, d_solutions, d_hash_entry);
 
 	printf("\n");
 	for (int i = 0; i < entries_total; i++) {
 		print_hash_entry(entries[i]);
+		if (solutions[i] > 0) {
+			unsigned char input[9];
+			get_input_from_number(solutions[i], input);
+			printf("  Pass: %s", input);
+		}
+		printf("\n");
 	}
 }
 
@@ -249,52 +274,53 @@ void *launch_gpu_handler_thread(void *vargp) {
 
 	int current_total = hi->entries_count;
 	
-	unsigned char *entries_has_solution = (unsigned char*) malloc(sizeof(unsigned char) * current_total);
-	unsigned char *d_entries_has_solution;
-	cudaMalloc(&d_entries_has_solution, sizeof(unsigned char) * current_total);
-	cudaMemset(d_entries_has_solution, 0, sizeof(unsigned char) * current_total);
+	unsigned long long* solutions = (unsigned long long*) malloc(sizeof(unsigned long long) * current_total);
+	unsigned long long* d_solutions;
+	cudaMalloc(&d_solutions, sizeof(unsigned long long) * current_total);
+	cudaMemset(d_solutions, 0, sizeof(unsigned long long) * current_total);
 
 	hash_entry *d_hash_entry;
 	cudaMalloc(&d_hash_entry, sizeof(hash_entry) * current_total);
 	cudaMemcpy(d_hash_entry, hi->entries, sizeof(hash_entry) * current_total, cudaMemcpyHostToDevice);
 
-
-	SHA256_CTX *contexts = (SHA256_CTX*) malloc(sizeof(SHA256_CTX) * current_total);
-	for (int i = 0; i < current_total; i++) {
-		sha256_init(contexts + i);
-		sha256_update(contexts + i, hi->entries[i].salt, SALT_LENGTH);
-	}
-
-
-	SHA256_CTX *d_sha256_contexts;
-	cudaMalloc(&d_sha256_contexts, sizeof(SHA256_CTX) * current_total);
-	cudaMemcpy(d_sha256_contexts, contexts, sizeof(SHA256_CTX) * current_total, cudaMemcpyHostToDevice);
+	// This is slower than computing the hash inside the kernel function 
+	// SHA256_CTX *contexts = (SHA256_CTX*) malloc(sizeof(SHA256_CTX) * current_total);
+	// for (int i = 0; i < current_total; i++) {
+	// 	sha256_init(contexts + i);
+	// 	sha256_update(contexts + i, hi->entries[i].salt, SALT_LENGTH);
+	// }
+	//
+	// SHA256_CTX *d_sha256_contexts;
+	// cudaMalloc(&d_sha256_contexts, sizeof(SHA256_CTX) * current_total);
+	// cudaMemcpy(d_sha256_contexts, contexts, sizeof(SHA256_CTX) * current_total, cudaMemcpyHostToDevice);
 
 
 	#if TEST_TYPE == SEQUENTIALLY
+	// hi->start = 305000;
 	hi->start = 0;
 
 	while(1) {
 		for (int i = 0; i < RUNS_PER_ITERATION; i++) {
 			sha256_cuda_all_posibilities<<<current_total * BLOCKS_PER_ENTRY, THREADS>>>(
-					d_hash_entry, current_total, d_entries_has_solution,
+					d_hash_entry, current_total, d_solutions,
 					hi->start + (THREADS * i * LOOPS_INSIDE_THREAD * BLOCKS_PER_ENTRY)
 			);
 		}
 		cudaDeviceSynchronize();
 
-		if (hi->start > 1000000000) {
+		if (hi->start > 29000000000) {
+		// if (hi->start > 290000000) {
 			break;
 		}
 
-		cudaMemcpy(entries_has_solution, d_entries_has_solution, sizeof(unsigned char) * current_total, cudaMemcpyDeviceToHost);
+		cudaMemcpy(solutions, d_solutions, sizeof(unsigned long long) * current_total, cudaMemcpyDeviceToHost);
 
-		if (check_if_solution_was_found(&entries_has_solution, d_entries_has_solution, current_total)) {
+		if (check_if_solution_was_found(solutions, current_total)) {
 			printf("\nSTART: %llu\n", hi->start);
 			process_after_solution_was_found(
-					hi->entries, entries_has_solution,
+					hi->entries, solutions,
 					hi->entries_count, &current_total,
-					d_entries_has_solution, d_hash_entry);
+					d_solutions, d_hash_entry);
 		}
 
 		hi->start += RUNS_PER_ITERATION * (THREADS * LOOPS_INSIDE_THREAD) * BLOCKS_PER_ENTRY;
@@ -347,20 +373,23 @@ int main() {
 
 	for (int i = 0; i < entries_count; i++) {
 		print_hash_entry(entries[i]);
+		printf("\n");
 	}
 
 	printf("\nStarting to break hashes\n");
 
+	// 6%Fg
+	// abcDef
+	// passworD
+	// p@ssw0rd
+	// AbCdEfGh
+	// 00000000
+	// 12081786
+	// 12345678
+	// 1@2@3@4@
+	// M3t@llic@
+	// HarryP0tter
 
-	// 6f416ce900e7a39206334a28b40f609a2984332b2b5313cdafba10e2f3d6f3a5:HFq..h :abcDef
-	// 94d72fe5153921c8b5ccee30e639025c7640ad15ed4c2c68e1eacb6d2db94139:G3m"5,N:1@2@3@4@
-	// 0a6ab9b4100383117271cd5c7ce083be7bbb669a532cc8857356315e61340abe:*3~/]cXER:passworD
-	// a775bf388c6e99f7255169afa0769b594692d86c662f294057de91a182cb416f:]x<7aV,1:p@ssw0rd
-	// 66240965684bed7ecd3ec495208364f25e964fe83aa31679f3210a5bfe32dc10:E3U:12081786
-	// c6f415b777999c168533a0a2716e6125f740235e99c03319ef0dcb1a0be06c15:?/ثFz9g馿f:00000000
-	// 69017d19f71e8e34d5a53be54ca8d4d7bc9dc6c913babe3bb1e222010eba8066:t\|p,:AbCdEfGh
-	// 12fad8a9aeb1c8ed1f988b07b32f0a9b7d7458e7c99822d1d4284bf6edcf3a3e:; 5W/g:M3t@llic@
-	// 27a575da417e1e4cdbf4fbbe8752579b6e1d65e79731ed773a6886812e2da116:3Tb:,b$]:6%Fg
 
 	unsigned long long **processedPtrs = (unsigned long long **) malloc(sizeof(unsigned long long *) * GPUS);
 	unsigned long long **singleProcessedPtrs = (unsigned long long **) malloc(sizeof(unsigned long long *) * GPUS);
@@ -387,7 +416,7 @@ int main() {
 		unsigned long singleProcesseds = 0;
 		unsigned char finished = 1;
 		for (int i = 0; i < GPUS; i++) {
-			singleProcesseds = *(singleProcessedPtrs[i]);
+			singleProcesseds += *(singleProcessedPtrs[i]);
 			totalProcessed += *(processedPtrs[i]);
 			finished = finished && *(finished_ptrs[i]);
 		}

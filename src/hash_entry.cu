@@ -10,9 +10,9 @@ void init_hash_entry(hash_entry* entry, const char* hash_bytes, const char* salt
 	hex_to_bytes(hash_bytes, entry->hash_bytes.hash_bytes);
 	hex_to_bytes_with_len(salt, entry->salt, SALT_LENGTH);
 
-	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
-		entry->solution[i] = 0;
-	}
+	// for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
+	// 	entry->solution[i] = 0;
+	// }
 }
 
 void read_entries_from_file(const char* filepath, hash_entry** entries, int* size) {
@@ -54,13 +54,6 @@ void print_hash_entry(hash_entry entry) {
 	for (size_t i = 0; i < SALT_LENGTH; i++) {
 		printf("%02x", entry.salt[i]);
 	}
-	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
-		if (entry.solution[i]) {
-			printf("  Pass: %s\n", entry.solution);
-			return;
-		}
-	}
-	printf("\n");
 }
 
 void hex_to_bytes(const char* hex_string, unsigned char bytes[HASH_BYTES_LENGTH]) {

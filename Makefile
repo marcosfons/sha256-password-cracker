@@ -1,7 +1,8 @@
 CC := nvcc
 CFLAGS :=
 
-CUDA_FLAGS := --use_fast_math
+CUDA_FLAGS := --use_fast_math 
+# -maxrregcount 110
 INC_DIRS :=
 LIB_DIRS :=
 LIBS :=
@@ -19,23 +20,26 @@ EXEC := sha256-password-cracker
 all: $(EXEC)
 
 $(EXEC): $(OBJS)
-	$(CC) -O 3 $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) $(LIB_DIRS) -o $@ $^ $(LIBS)
+	$(CC) -O 2 $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) $(LIB_DIRS) -o $@ $^ $(LIBS)
 
 $(OBJ_DIR)/%.o: src/%.cu $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) -c $< -o $@
 
-# profile: CFLAGS +=-g
+googlecolab: CFLAGS += -D BLOCKS_PER_ENTRY=256
+googlecolab: CFLAGS += -D THREADS=1024
+googlecolab: CFLAGS += -D RUNS_PER_ITERATION=8
+googlecolab: CFLAGS += -D LOOPS_INSIDE_THREAD=64
+googlecolab: $(EXEC)
+
 profile: CUDA_FLAGS +=-lineinfo
 profile: $(EXEC)
-	mkdir -p $(PROFILE_DIR)
-	# nvprof ./$(EXEC)
-	# sudo nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
-	ncu -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
-	# /usr/local/NVIDIA-Nsight-Compute/nv-nsight-cu-cli -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
+# mkdir -p $(PROFILE_DIR)
+# sudo nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
+# ncu --target-processes all -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
 
 zip:
-	zip -r ../sha256-password-cracker.zip . -x ".git/*" "obj/*" "sha256-password-cracker"
+	zip -r ../sha256-password-cracker.zip . -x "*.git/*" "obj/*" "sha256-password-cracker"
 
 clean:
 	rm -rf $(EXEC) $(OBJ_DIR) $(PROFILE_DIR)

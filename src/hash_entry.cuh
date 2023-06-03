@@ -26,7 +26,7 @@ typedef struct hash_entry {
 	// unsigned char hash_bytes[HASH_BYTES_LENGTH];
 	u_hash_bytes hash_bytes;
 	unsigned char salt[SALT_LENGTH];
-	char solution[MAX_PASSWORD_LENGTH];
+	// char solution[MAX_PASSWORD_LENGTH];
 } hash_entry;
 
 
@@ -38,7 +38,6 @@ void print_hash_entry(hash_entry entry);
 
 void hex_to_bytes(const char* hex_string, unsigned char bytes[HASH_BYTES_LENGTH]);
 void hex_to_bytes_with_len(const char* hex_string, unsigned char *bytes, int len);
-uint8_t* datahex(char* string);
 
 
 
