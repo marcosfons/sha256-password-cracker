@@ -32,10 +32,10 @@
 
 #ifdef TEST
 #define BLOCKS 32
-#define BLOCKS_PER_ENTRY 5
-#define THREADS 600
+#define BLOCKS_PER_ENTRY 12
+#define THREADS 1024
 #define RUNS_PER_ITERATION 1
-#define LOOPS_INSIDE_THREAD 64*10
+#define LOOPS_INSIDE_THREAD 128
 #define PRINT_STATUS_DELAY 10000
 #endif
 
@@ -48,6 +48,12 @@
 
 #define THREAD_EXECUTION_ITERATIONS ((MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK))
 
+const char h_charset[] = {
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+    'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
+    'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '1', '2', '3', '4',
+    '5', '6', '7', '8', '9', '0', '%', '*', '$', '@'};
 __constant__ const char charset[] = {
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
     'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
@@ -80,17 +86,13 @@ __device__ unsigned long deviceRandomGen(unsigned long x) {
 }
 
 __device__ unsigned char hash_cmp_equal(const unsigned char hash1[HASH_BYTES_LENGTH], const unsigned char hash2[HASH_BYTES_LENGTH]) {
-	// if (hash1[0] != hash2[0]) {
-	// 	return 0;
-	// }
 	#pragma unroll
-	for (int i = 0; i < HASH_BYTES_LENGTH; i++) {
+	for (unsigned short i = 0; i < HASH_BYTES_LENGTH; i++) {
 		if (hash1[i] != hash2[i]) {
 			return 0;
 		}
 	}
 	return 1;
-	// return 1;
 	// return (hash1.hash_number_long[0]   == hash2.hash_number_long[0] ) &&
 	// 				(hash1.hash_number_long[1]  == hash2.hash_number_long[1] ) &&
 	// 				(hash1.hash_number[1]       == hash2.hash_number[1]) &&
@@ -98,11 +100,9 @@ __device__ unsigned char hash_cmp_equal(const unsigned char hash1[HASH_BYTES_LEN
 	// 				(hash1.hash_number[3]       == hash2.hash_number[3]);
 }
 
-__host__ __device__
-int get_input_from_number(unsigned long long current, unsigned char input[8]) {
-	#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		input[i] = charset[current % CHARSET_LENGTH];
+__host__ int h_get_input_from_number(unsigned long long current, unsigned char input[8]) {
+	for (unsigned short i = 0; i < 8; i++) {
+		input[i] = h_charset[current % CHARSET_LENGTH];
 		current /= CHARSET_LENGTH;
 		if (current <= 0) {
 			return i + 1;
@@ -111,16 +111,24 @@ int get_input_from_number(unsigned long long current, unsigned char input[8]) {
 	return 0;
 }
 
-__device__ void sha256_update_from_number(SHA256_CTX *ctx, unsigned long long current) {
+__device__ void get_input_from_number(unsigned long long current, unsigned char input[8]) {
 	#pragma unroll
-	for (unsigned short i = 0; i < 8; ++i) {
-		ctx->data[ctx->datalen] = charset[current % CHARSET_LENGTH];
-		ctx->datalen++;
-
+	for (unsigned short i = 0; i < 8; i++) {
+		input[i] = charset[current % CHARSET_LENGTH];
 		current /= CHARSET_LENGTH;
 		if (current <= 0) {
 			return;
 		}
+	}
+	return;
+}
+
+__device__ void sha256_update_from_number(SHA256_CTX *ctx, unsigned long long current) {
+	while (current > 0) {
+		ctx->data[ctx->datalen] = charset[current % CHARSET_LENGTH];
+		ctx->datalen++;
+
+		current /= CHARSET_LENGTH;
 	}
 }
 
@@ -141,12 +149,18 @@ __global__ void sha256_cuda_all_posibilities(
 	// unsigned short length;
 
 	#pragma unroll
-	for (int j = current; j < current + LOOPS_INSIDE_THREAD; j++) {
+	for (unsigned long long j = current; j < current + LOOPS_INSIDE_THREAD; j++) {
 		// length = get_input_from_number(current + j, input);
 		// sha_ctx = initial;
 
 		sha256_init(&sha_ctx);
-		sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
+		// sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
+		#pragma unroll
+		for (unsigned short i = 0; i < SALT_LENGTH; i++) {
+			sha_ctx.data[i] = entry->salt[i];
+		}
+		sha_ctx.datalen = SALT_LENGTH;
+
 
 		sha256_update_from_number(&sha_ctx, j);
 
@@ -257,7 +271,7 @@ void process_after_solution_was_found(hash_entry *entries, unsigned long long *s
 		print_hash_entry(entries[i]);
 		if (solutions[i] > 0) {
 			unsigned char input[9];
-			get_input_from_number(solutions[i], input);
+			h_get_input_from_number(solutions[i], input);
 			printf("  Pass: %s", input);
 		}
 		printf("\n");
@@ -308,7 +322,13 @@ void *launch_gpu_handler_thread(void *vargp) {
 		}
 		cudaDeviceSynchronize();
 
-		if (hi->start > 29000000000) {
+		// if (hi->start > 130000000) {
+		if (hi->start > 20000000) {
+			cudaError_t error = cudaGetLastError();
+			if (error != cudaSuccess) {
+			printf("\n");
+					printf("CUDA Error: %s\n", cudaGetErrorString(error));
+			}
 		// if (hi->start > 290000000) {
 			break;
 		}

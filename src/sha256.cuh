@@ -50,7 +50,7 @@ static const WORD host_k[64] = {
 /*********************** FUNCTION DECLARATIONS **********************/
 char * print_sha(BYTE * buff);
 __host__ __device__ void sha256_init(SHA256_CTX *ctx);
-__host__ __device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_t len);
+__host__ __device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], unsigned short len);
 __device__ void sha256_final(SHA256_CTX *ctx, BYTE hash[]);
 
 
@@ -96,7 +96,7 @@ __device__ void mycpy64(uint32_t *d, const uint32_t *s) {
     for (int k=0; k < 16; k++) d[k] = s[k];
 }
 
-__device__ void sha256_transform(SHA256_CTX *ctx, const BYTE data[])
+__device__ void sha256_transform(__restrict__ SHA256_CTX *ctx, const __restrict__ BYTE data[])
 {
 	WORD a, b, c, d, e, f, g, h, i, j, t1, t2, m[64];
     // WORD S[8];
@@ -158,12 +158,10 @@ __host__ __device__ void sha256_init(SHA256_CTX *ctx)
 	ctx->state[7] = 0x5be0cd19;
 }
 
-__host__ __device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_t len)
+__host__ __device__ void sha256_update(SHA256_CTX *ctx, __restrict__ const BYTE data[], unsigned short len)
 {
-	WORD i;
-
 	// for each byte in message
-	for (i = 0; i < len; ++i) {
+	for (unsigned short i = 0; i < len; ++i) {
 		// ctx->data == message 512 bit chunk
 		ctx->data[ctx->datalen] = data[i];
 		ctx->datalen++;
@@ -179,17 +177,17 @@ __host__ __device__ void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_
 
 __device__ void sha256_final(SHA256_CTX *ctx, BYTE hash[])
 {
-	WORD i;
-
-	i = ctx->datalen;
+	unsigned short i = ctx->datalen;
 
 	// TODO: ALERT This is only because I know that the data will be less than 56
 	// Pad whatever data is left in the buffer.
 	// if (ctx->datalen < 56) {
-		ctx->data[i++] = 0x80;
-		while (i < 56)
-			ctx->data[i++] = 0x00;
-	// }
+	ctx->data[i++] = 0x80;
+	#pragma unroll
+	while (i < 56) {
+		ctx->data[i++] = 0x00;
+	}
+	
 	// else {
 	// 	ctx->data[i++] = 0x80;
 	// 	while (i < 64)

@@ -62,7 +62,7 @@ void hex_to_bytes(const char* hex_string, unsigned char bytes[HASH_BYTES_LENGTH]
   }
 }
 
-void hex_to_bytes_with_len(const char* hex_string, unsigned char* bytes, int len) {
+void hex_to_bytes_with_len(const char* hex_string, unsigned char* bytes, unsigned int len) {
   for (unsigned int i = 0; i < len; i += 1) {
 		sscanf(&hex_string[i * 2], "%02x", (unsigned int *) &bytes[i]);
 		// sscanf(&hex_string[i * 2], "%02x", (unsigned int *) &bytes[i]);

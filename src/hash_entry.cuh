@@ -37,7 +37,7 @@ void init_hash_entry(hash_entry* entry, const char hash_bytes[HASH_BYTES_LENGTH]
 void print_hash_entry(hash_entry entry);
 
 void hex_to_bytes(const char* hex_string, unsigned char bytes[HASH_BYTES_LENGTH]);
-void hex_to_bytes_with_len(const char* hex_string, unsigned char *bytes, int len);
+void hex_to_bytes_with_len(const char* hex_string, unsigned char *bytes, unsigned int len);
 
 
 

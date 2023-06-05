@@ -1,5 +1,5 @@
 CC := nvcc
-CFLAGS :=
+CFLAGS :=--compiler-options -Wall
 
 CUDA_FLAGS := --use_fast_math 
 # -maxrregcount 110
