@@ -38,6 +38,11 @@ profile: $(EXEC)
 # sudo nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
 # ncu --target-processes all -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
 
+ptx: clean
+ptx: CUDA_FLAGS +=-ptx
+ptx: CFLAGS +=
+ptx: $(EXEC)
+
 zip:
 	zip -r ../sha256-password-cracker.zip . -x "*.git/*" "obj/*" "sha256-password-cracker"
 

@@ -16,7 +16,7 @@ void init_hash_entry(hash_entry* entry, const char* hash_bytes, const char* salt
 }
 
 void read_entries_from_file(const char* filepath, hash_entry** entries, int* size) {
-	FILE* file = fopen(filepath, "r");  // Replace "input.txt" with your file path
+	FILE* file = fopen(filepath, "r");
 	if (file == NULL) {
 		printf("An error has occurred while reading file\n");
 		perror("Error opening the file");
