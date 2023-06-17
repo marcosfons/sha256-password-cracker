@@ -26,9 +26,9 @@
 #define GPUS 1
 
 #ifdef DEBUG
-#define BLOCKS_PER_ENTRY 10
+#define BLOCKS_PER_ENTRY 200
 #define THREADS 1024
-#define RUNS_PER_ITERATION 3
+#define RUNS_PER_ITERATION 1
 #define LOOPS_INSIDE_THREAD 66
 #define PRINT_STATUS_DELAY 10000
 #endif
@@ -61,8 +61,8 @@ __constant__ char d_charset[sizeof(charset)];
 __constant__ const int CHARSET_LENGTH = sizeof(charset) / sizeof(char);
 
 typedef struct handler_input {
-  int device;
-  unsigned long long hashesProcessed;
+	int device;
+	unsigned long long hashesProcessed;
 	unsigned long long start;
 	hash_entry* entries;
 	int entries_count;
@@ -160,12 +160,11 @@ __global__ void sha256_cuda_all_posibilities(
 	}
 }
 
-__global__ void sha256_sequential_wordlist(
-    hash_entry *__restrict__ entries, int entries_count,
-    unsigned char *__restrict__ solutions,
-    unsigned long long start,
-		unsigned char* sequential_wordlist) {
-	hash_entry* entry = entries + (blockIdx.x%entries_count);
+__global__ void sha256_sequential_wordlist(hash_entry *__restrict__ entries,
+                                           int entries_count,
+                                           unsigned long long start,
+                                           unsigned char *sequential_wordlist) {
+	hash_entry* entry = entries + blockIdx.x;
 
 	SHA256_CTX sha_ctx;
 	u_hash_bytes digest;
@@ -179,14 +178,14 @@ __global__ void sha256_sequential_wordlist(
 		}
 		sha_ctx.datalen = SALT_LENGTH;
 
-		sha256_update(&sha_ctx, sequential_wordlist + start, j);
+		sha256_update(&sha_ctx, sequential_wordlist + start + (blockIdx.y * THREADS) + threadIdx.x, j);
 		sha256_final(&sha_ctx, digest.hash_bytes);
 
 		if (hash_cmp_equal(digest.hash_bytes, entry->hash_bytes.hash_bytes)) {
 			for (int i = 0; i < j; i++) {
-				solutions[(blockIdx.x / BLOCKS_PER_ENTRY * MAX_PASSWORD_LENGTH) + i] = sequential_wordlist[start + i];
+				entry->solution[i] = sequential_wordlist[start + (blockIdx.y * THREADS) + threadIdx.x + i];
 			}
-			solutions[(blockIdx.x / BLOCKS_PER_ENTRY * MAX_PASSWORD_LENGTH) + j] = '\0';
+			entry->solution[j] = '\0';
 			break;
 		}
 	}
@@ -227,82 +226,49 @@ __global__ void sha256_sequential_wordlist(
 // }
 //
 
-void copy_solution_by_index(unsigned char *dst, int dst_index, const unsigned char* src, int src_index) {
-	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
-		dst[dst_index * MAX_PASSWORD_LENGTH + i] = src[src_index * MAX_PASSWORD_LENGTH + i];
-	}
-}
-
-int solution_exists(unsigned char* solutions, int index) {
-	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
-		if (solutions[index * MAX_PASSWORD_LENGTH + i]) {
-			return 1;
-		}
-	}
-	return 0;
-}
-
-void reorganize_not_solved_entries(hash_entry *entries,
-                                   unsigned char *solutions,
-                                   int entries_total, int *current_total,
-                                   unsigned char *d_solutions,
+void reorganize_not_solved_entries(hash_entry *entries, int entries_total,
+                                   int *current_total,
                                    hash_entry *d_hash_entry) {
 	// This will place solved entries into the end of the list
 	// It will change the CPU (host) variables in the launch_gpu_handler_thread function
 	for (int i = 0; i < *current_total; i++) {
-		if (solution_exists(solutions, i)) {
-			printf("FOUND: %s\n", (char*) solutions + (i * MAX_PASSWORD_LENGTH));
+		if (contains_solution_hash_entry(entries + i)) {
+			// printf("FOUND: %s\n", (char*) solutions + (i * MAX_PASSWORD_LENGTH));
 			// SWAP
 			int final_index = (*current_total) - 1;
 			hash_entry entry_copy = entries[i];
-			unsigned char solution_copy[MAX_PASSWORD_LENGTH];
-			copy_solution_by_index(solution_copy, 0, solutions, i);
-
 			entries[i] = entries[final_index];
-			copy_solution_by_index(solutions, i, solutions, final_index);
-
 			entries[final_index] = entry_copy;
-			copy_solution_by_index(solutions, final_index, solution_copy, 0);
 
 			*current_total = *current_total - 1;
 			i -= 1;
 		}
 	}
 
-	// cudaMemcpy(d_solutions, solutions, sizeof(unsigned char) * (entries_total) * MAX_PASSWORD_LENGTH, cudaMemcpyHostToDevice);
-	cudaMemset(d_solutions, 0, sizeof(unsigned char) * (entries_total) * MAX_PASSWORD_LENGTH);
 	cudaMemcpy(d_hash_entry, entries, sizeof(hash_entry) * (entries_total), cudaMemcpyHostToDevice);
 }
 
-
-unsigned char check_if_solution_was_found(unsigned char* solutions, int current_total) {
-	for (int curr_pass = 0; curr_pass < current_total; curr_pass += 1) {
-		if (solution_exists(solutions, curr_pass)) {
-			return 1;
+bool check_if_solution_was_found(hash_entry* entries, int current_total) {
+	for (int i = 0; i < current_total; i++) {
+		if (contains_solution_hash_entry(entries + i)) {
+			return true;
 		}
 	}
 
-	return 0;
+	return false;
 }
 
-void process_after_solution_was_found(hash_entry *entries, unsigned char *solutions,
-                                   int entries_total, int *current_total,
-                                   unsigned char *d_solutions,
-                                   hash_entry *d_hash_entry) {
-	reorganize_not_solved_entries(entries, solutions, entries_total,
-																current_total, d_solutions, d_hash_entry);
+void process_after_solution_was_found(hash_entry *entries, int entries_total,
+                                      int *current_total,
+                                      hash_entry *d_hash_entry) {
+	reorganize_not_solved_entries(entries, entries_total, current_total, d_hash_entry);
 
 	printf("\n");
 	for (int i = 0; i < entries_total; i++) {
 		print_hash_entry(entries[i]);
-		
-		if (solution_exists(solutions, i)) {
-			printf("  Pass: %s", solutions + (i * MAX_PASSWORD_LENGTH));
-		}
 		printf("\n");
 	}
 }
-
 
 void *launch_gpu_handler_thread(void *vargp) {
 	handler_input *hi = (handler_input *) vargp;
@@ -315,11 +281,6 @@ void *launch_gpu_handler_thread(void *vargp) {
 
 	int current_total = hi->entries_count;
 	
-	unsigned char* solutions = (unsigned char*) malloc(sizeof(unsigned char) * hi->entries_count * MAX_PASSWORD_LENGTH);
-	unsigned char* d_solutions;
-	cudaMalloc(&d_solutions, sizeof(unsigned char) * current_total * MAX_PASSWORD_LENGTH);
-	cudaMemset(d_solutions, 0, sizeof(unsigned char) * current_total * MAX_PASSWORD_LENGTH);
-
 	hash_entry *d_hash_entry;
 	cudaMalloc(&d_hash_entry, sizeof(hash_entry) * current_total);
 	cudaMemcpy(d_hash_entry, hi->entries, sizeof(hash_entry) * current_total, cudaMemcpyHostToDevice);
@@ -332,26 +293,25 @@ void *launch_gpu_handler_thread(void *vargp) {
 	
 	hi->start = 0;
 
+
 	while(1) {
-		sha256_sequential_wordlist<<<current_total * 1, 1>>>(
-				d_hash_entry, current_total, d_solutions,
-				hi->start,
-				d_wordlist
+		dim3 num_blocks(current_total, BLOCKS_PER_ENTRY, 1);
+		dim3 num_threads(THREADS, 1, 1);
+
+		sha256_sequential_wordlist<<<num_blocks, num_threads>>>(
+				d_hash_entry, current_total, hi->start, d_wordlist
 		);
+		hi->start += BLOCKS_PER_ENTRY * THREADS;
 		cudaDeviceSynchronize();
 
-		cudaMemcpy(solutions, d_solutions, sizeof(unsigned char) * hi->entries_count * MAX_PASSWORD_LENGTH, cudaMemcpyDeviceToHost);
+		cudaMemcpy(hi->entries, d_hash_entry, sizeof(hash_entry) * current_total, cudaMemcpyDeviceToHost);
 
-		if (check_if_solution_was_found(solutions, current_total)) {
+		if (check_if_solution_was_found(hi->entries, current_total)) {
 			printf("\nSTART: %llu %d\n", hi->start, current_total);
-			process_after_solution_was_found(
-					hi->entries, solutions,
-					hi->entries_count, &current_total,
-					d_solutions, d_hash_entry);
+			process_after_solution_was_found(hi->entries, hi->entries_count, &current_total, d_hash_entry);
 		}
 
-		hi->start += 1;
-		hi->hashesProcessed += current_total * (MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK);
+		hi->hashesProcessed += current_total * (MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK) * THREADS * BLOCKS_PER_ENTRY;
 
 		if (hi->start > hi->sequential_wordlist->character_count) {
 			break;
@@ -428,10 +388,9 @@ void *launch_gpu_handler_thread(void *vargp) {
 int main() {
 	setlocale(LC_NUMERIC, "");
 
-	show_devices_info();
+	show_gpu_devices_info();
 
 	sequential_wordlist wordlist;
-
 	read_sequential_wordlist_from_file("wordlists/rockyou.txt", &wordlist);
 
 	printf("\n");

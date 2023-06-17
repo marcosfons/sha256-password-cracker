@@ -44,7 +44,7 @@ int _ConvertSMVer2Cores(int major, int minor) {
 	return -1; // Unknown compute capability
 }
 
-void show_devices_info() {
+void show_gpu_devices_info() {
 	int deviceCount;
 	cudaGetDeviceCount(&deviceCount);
 

@@ -175,7 +175,7 @@ __host__ __device__ void sha256_update(SHA256_CTX *ctx, __restrict__ const BYTE 
 	}
 }
 
-__device__ void sha256_final(SHA256_CTX *ctx, BYTE hash[])
+__device__ void sha256_final(SHA256_CTX *ctx, BYTE hash[32])
 {
 	unsigned short i = ctx->datalen;
 

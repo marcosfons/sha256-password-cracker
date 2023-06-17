@@ -44,8 +44,6 @@ void read_sequential_wordlist_from_file(const char* filepath, sequential_wordlis
 	wordlist->words_count = 0;
 	wordlist->character_count = 0;
 
-	int i = 0; 
-
 	char line[100]; // Words will not be much longer than 512 chars
 	while (fgets(line, sizeof(line), file) != NULL) {
 		unsigned short length = strlen(line) - 1;
