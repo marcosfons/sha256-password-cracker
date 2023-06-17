@@ -26,7 +26,7 @@
 #define GPUS 1
 
 #ifdef DEBUG
-#define BLOCKS_PER_ENTRY 200
+#define BLOCKS_PER_ENTRY 100
 #define THREADS 1024
 #define RUNS_PER_ITERATION 1
 #define LOOPS_INSIDE_THREAD 66
@@ -64,8 +64,7 @@ typedef struct handler_input {
 	int device;
 	unsigned long long hashesProcessed;
 	unsigned long long start;
-	hash_entry* entries;
-	int entries_count;
+	hash_entries entries;
 	unsigned char finished;
 	sequential_wordlist *sequential_wordlist;
 } handler_input;
@@ -226,48 +225,13 @@ __global__ void sha256_sequential_wordlist(hash_entry *__restrict__ entries,
 // }
 //
 
-void reorganize_not_solved_entries(hash_entry *entries, int entries_total,
-                                   int *current_total,
-                                   hash_entry *d_hash_entry) {
-	// This will place solved entries into the end of the list
-	// It will change the CPU (host) variables in the launch_gpu_handler_thread function
-	for (int i = 0; i < *current_total; i++) {
-		if (contains_solution_hash_entry(entries + i)) {
-			// printf("FOUND: %s\n", (char*) solutions + (i * MAX_PASSWORD_LENGTH));
-			// SWAP
-			int final_index = (*current_total) - 1;
-			hash_entry entry_copy = entries[i];
-			entries[i] = entries[final_index];
-			entries[final_index] = entry_copy;
-
-			*current_total = *current_total - 1;
-			i -= 1;
-		}
-	}
-
-	cudaMemcpy(d_hash_entry, entries, sizeof(hash_entry) * (entries_total), cudaMemcpyHostToDevice);
-}
-
-bool check_if_solution_was_found(hash_entry* entries, int current_total) {
-	for (int i = 0; i < current_total; i++) {
-		if (contains_solution_hash_entry(entries + i)) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-void process_after_solution_was_found(hash_entry *entries, int entries_total,
-                                      int *current_total,
+void process_after_solution_was_found(hash_entries *entries,
                                       hash_entry *d_hash_entry) {
-	reorganize_not_solved_entries(entries, entries_total, current_total, d_hash_entry);
+	reorganize_not_solved_entries(entries);
+	cudaMemcpy(d_hash_entry, entries->entries, sizeof(hash_entry) * (entries->entries_count), cudaMemcpyHostToDevice);
 
 	printf("\n");
-	for (int i = 0; i < entries_total; i++) {
-		print_hash_entry(entries[i]);
-		printf("\n");
-	}
+	print_hash_entries(entries);
 }
 
 void *launch_gpu_handler_thread(void *vargp) {
@@ -278,12 +242,10 @@ void *launch_gpu_handler_thread(void *vargp) {
 
 	// Pre SHA-256
 	cudaMemcpyToSymbol(dev_k, host_k, sizeof(host_k), 0, cudaMemcpyHostToDevice);
-
-	int current_total = hi->entries_count;
 	
 	hash_entry *d_hash_entry;
-	cudaMalloc(&d_hash_entry, sizeof(hash_entry) * current_total);
-	cudaMemcpy(d_hash_entry, hi->entries, sizeof(hash_entry) * current_total, cudaMemcpyHostToDevice);
+	cudaMalloc(&d_hash_entry, sizeof(hash_entry) * hi->entries.entries_count);
+	cudaMemcpy(d_hash_entry, hi->entries.entries, sizeof(hash_entry) * hi->entries.entries_count, cudaMemcpyHostToDevice);
 
 
 	#if TEST_TYPE == SEQUENTIAL_WORDLIST
@@ -293,25 +255,23 @@ void *launch_gpu_handler_thread(void *vargp) {
 	
 	hi->start = 0;
 
-
 	while(1) {
-		dim3 num_blocks(current_total, BLOCKS_PER_ENTRY, 1);
+		dim3 num_blocks(hi->entries.current_total, BLOCKS_PER_ENTRY, 1);
 		dim3 num_threads(THREADS, 1, 1);
 
 		sha256_sequential_wordlist<<<num_blocks, num_threads>>>(
-				d_hash_entry, current_total, hi->start, d_wordlist
+				d_hash_entry, hi->entries.current_total, hi->start, d_wordlist
 		);
 		hi->start += BLOCKS_PER_ENTRY * THREADS;
 		cudaDeviceSynchronize();
 
-		cudaMemcpy(hi->entries, d_hash_entry, sizeof(hash_entry) * current_total, cudaMemcpyDeviceToHost);
+		cudaMemcpy(hi->entries.entries, d_hash_entry, sizeof(hash_entry) * hi->entries.current_total, cudaMemcpyDeviceToHost);
 
-		if (check_if_solution_was_found(hi->entries, current_total)) {
-			printf("\nSTART: %llu %d\n", hi->start, current_total);
-			process_after_solution_was_found(hi->entries, hi->entries_count, &current_total, d_hash_entry);
+		if (contains_new_solution(&hi->entries)) {
+			process_after_solution_was_found(&hi->entries, d_hash_entry);
 		}
 
-		hi->hashesProcessed += current_total * (MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK) * THREADS * BLOCKS_PER_ENTRY;
+		hi->hashesProcessed += hi->entries.current_total * (MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK) * THREADS * BLOCKS_PER_ENTRY;
 
 		if (hi->start > hi->sequential_wordlist->character_count) {
 			break;
@@ -391,41 +351,24 @@ int main() {
 	show_gpu_devices_info();
 
 	sequential_wordlist wordlist;
-	read_sequential_wordlist_from_file("wordlists/rockyou.txt", &wordlist);
+	// read_sequential_wordlist_from_file("wordlists/rockyou_shuf.txt", &wordlist);
+	read_sequential_wordlist_from_file("wordlists/n_crackstation-human-only.txt", &wordlist);
 
 	printf("\n");
 	printf("WORDS: %lu\n SIZE (bytes): %lu\n", wordlist.words_count, wordlist.character_count * sizeof(char));
-	// printf("%s\n", wordlist.words);
 
-	int entries_count = 0;
-	hash_entry* entries = (hash_entry*) malloc(1);
+
 	printf("Loading hashes from the file\n\n");
-
-	read_entries_from_file("data/hashes_and_salts.txt", &entries, &entries_count);
-	// read_entries_from_file("data/correct.txt", &entries, &entries_count);
-	if (entries_count == 0) {
+	hash_entries entries;
+	read_hash_entries_from_file("data/hashes_and_salts.txt", &entries);
+	if (entries.entries_count == 0) {
 		printf("No entries found, exiting\n");
 		exit(0);
 	}
 
-	for (int i = 0; i < entries_count; i++) {
-		print_hash_entry(entries[i]);
-		printf("\n");
-	}
+	print_hash_entries(&entries);
 
 	printf("\nStarting to break hashes\n");
-
-	// 6%Fg
-	// abcDef
-	// passworD
-	// p@ssw0rd
-	// AbCdEfGh
-	// 00000000
-	// 12081786
-	// 12345678
-	// 1@2@3@4@
-	// M3t@llic@
-	// HarryP0tter
 
 	unsigned long long **processedPtrs = (unsigned long long **) malloc(sizeof(unsigned long long *) * GPUS);
 	unsigned long long **singleProcessedPtrs = (unsigned long long **) malloc(sizeof(unsigned long long *) * GPUS);
@@ -438,7 +381,6 @@ int main() {
 		hi->device = i;
 		hi->hashesProcessed = 0;
 		hi->entries = entries;
-		hi->entries_count = entries_count;
 		hi->finished = 0;
 		hi->sequential_wordlist = &wordlist;
 		processedPtrs[i] = &hi->hashesProcessed;
@@ -484,8 +426,6 @@ int main() {
 	printf("\nHashes processed: %'lu\n", totalProcessed);
 	printf("Time: %llu\n", elapsed);
 	printf("Hashes/sec: %'lu\n", (unsigned long) ((double) totalProcessed / (double) elapsed) * 1000);
-
-	free(entries);
 
 	return 0;
 }
