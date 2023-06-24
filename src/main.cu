@@ -19,8 +19,8 @@
 // #define TEST
 // #define RELEASE
 
-#define TEST_TYPE SEQUENTIAL_WORDLIST
-// #define TEST_TYPE SEQUENTIALLY
+// #define TEST_TYPE SEQUENTIAL_WORDLIST
+#define TEST_TYPE SEQUENTIALLY
 // #define TEST_TYPE RANDOMLY
 
 #define GPUS 1
@@ -33,21 +33,9 @@
 #define PRINT_STATUS_DELAY 10000
 #endif
 
-#ifdef TEST
-#define BLOCKS_PER_ENTRY 12
-#define THREADS 1024
-#define RUNS_PER_ITERATION 1
-#define LOOPS_INSIDE_THREAD 128
-#define PRINT_STATUS_DELAY 10000
-#endif
-
-#ifdef RELEASE
-#define THREADS 2048
-#define RUNS_PER_ITERATION 128
-#define PRINT_STATUS_DELAY 1000000
-#endif
-
 #define THREAD_EXECUTION_ITERATIONS ((MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK))
+
+#define MAX_SEQUENTIAL_WORDLIST_CHARS 600000000
 
 const char charset[] = {
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
@@ -56,9 +44,7 @@ const char charset[] = {
     'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '1', '2', '3', '4',
     '5', '6', '7', '8', '9', '0', '%', '*', '$', '@'};
 
-__constant__ char d_charset[sizeof(charset)];
-
-__constant__ const int CHARSET_LENGTH = sizeof(charset) / sizeof(char);
+const int CHARSET_LENGTH = sizeof(charset) / sizeof(char);
 
 typedef struct handler_input {
 	int device;
@@ -75,13 +61,6 @@ long long timems() {
 	return (long long) end.tv_sec * 1000 + (long long) end.tv_usec / 1000;
 }
 
-__device__ unsigned long deviceRandomGen(unsigned long x) {
-	x ^= (x << 21);
-	x ^= (x >> 35);
-	x ^= (x << 4);
-	return x;
-}
-
 __device__ unsigned char hash_cmp_equal(const unsigned char hash1[HASH_BYTES_LENGTH], const unsigned char hash2[HASH_BYTES_LENGTH]) {
 	#pragma unroll
 	for (unsigned short i = 0; i < HASH_BYTES_LENGTH; i++) {
@@ -90,73 +69,6 @@ __device__ unsigned char hash_cmp_equal(const unsigned char hash1[HASH_BYTES_LEN
 		}
 	}
 	return 1;
-}
-
-__host__ int h_get_input_from_number(unsigned long long current, unsigned char input[8]) {
-	for (unsigned short i = 0; i < 8; i++) {
-		input[i] = charset[current % CHARSET_LENGTH];
-		current /= CHARSET_LENGTH;
-		if (current <= 0) {
-			input[i+1] = '\0';
-			return i + 1;
-		}
-	}
-	return 0;
-}
-
-__device__ void get_input_from_number(unsigned long long current, unsigned char input[8]) {
-	#pragma unroll
-	for (unsigned short i = 0; i < 8; i++) {
-		input[i] = d_charset[current % CHARSET_LENGTH];
-		current /= CHARSET_LENGTH;
-		if (current <= 0) {
-			return;
-		}
-	}
-	return;
-}
-
-__device__ void sha256_update_from_number(SHA256_CTX *ctx, unsigned long long current) {
-	while (current > 0) {
-		ctx->data[ctx->datalen] = d_charset[current % CHARSET_LENGTH];
-		ctx->datalen++;
-
-		current /= CHARSET_LENGTH;
-	}
-}
-
-__global__ void sha256_cuda_all_posibilities(
-    hash_entry *__restrict__ entries, int entries_count,
-    unsigned long long *__restrict__ solutions,
-    unsigned long long start) {
-
-	hash_entry* entry = entries + (blockIdx.x / BLOCKS_PER_ENTRY);
-
-	SHA256_CTX sha_ctx;
-	u_hash_bytes digest;
-
-	unsigned long long current = start + ( (blockIdx.x % BLOCKS_PER_ENTRY) * (blockDim.x * LOOPS_INSIDE_THREAD) ) + (threadIdx.x * LOOPS_INSIDE_THREAD);
-
-	#pragma unroll
-	for (unsigned short j = 0; j < LOOPS_INSIDE_THREAD; j++) {
-	// for (unsigned long long j = current; j < current + LOOPS_INSIDE_THREAD; j++) {
-		sha256_init(&sha_ctx);
-		// sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
-		#pragma unroll
-		for (unsigned short i = 0; i < SALT_LENGTH; i++) {
-			sha_ctx.data[i] = entry->salt[i];
-		}
-		sha_ctx.datalen = SALT_LENGTH;
-
-		sha256_update_from_number(&sha_ctx, current);
-		sha256_final(&sha_ctx, digest.hash_bytes);
-
-		if (hash_cmp_equal(digest.hash_bytes, entry->hash_bytes.hash_bytes)) {
-			solutions[(blockIdx.x / BLOCKS_PER_ENTRY)] = current;
-			break;
-		}
-		current += 1;
-	}
 }
 
 __global__ void sha256_sequential_wordlist(hash_entry *__restrict__ entries,
@@ -190,40 +102,31 @@ __global__ void sha256_sequential_wordlist(hash_entry *__restrict__ entries,
 	}
 }
 
-// __global__ void sha256_cuda(hash_entry *entries, int entries_count,
-//                             unsigned long long *blockContainsSolution,
-//                             unsigned long baseSeed) {
-//   int id = blockIdx.x * blockDim.x + threadIdx.x;
-// 	int entry_pos = blockIdx.x % entries_count;
-//   unsigned long seed = deviceRandomGen(baseSeed + id);
-//
-// 	hash_entry* entry = entries + entry_pos;
-//
-// 	SHA256_CTX sha_ctx;
-// 	u_hash_bytes digest;
-// 	BYTE input[MAX_PASSWORD_LENGTH];
-//
-// 	#pragma unroll
-// 	for (int i = 0; i < MAX_PASSWORD_LENGTH; i++) {
-// 		seed = deviceRandomGen(seed);
-// 		input[i] = charset[seed % CHARSET_LENGTH];
-// 	}
-// 	
-// 	for (int input_length = MIN_PASSWORD_CHECK; input_length < MAX_PASSWORD_LENGTH; input_length++) {
-// 		sha256_init(&sha_ctx);
-// 		sha256_update(&sha_ctx, entry->salt, SALT_LENGTH);
-// 		sha256_update(&sha_ctx, input, input_length);
-// 		sha256_final(&sha_ctx, digest.hash_bytes);
-//
-// 		if (hash_cmp_equal(digest.hash_bytes, entry->hash_bytes.hash_bytes)) {
-// 			for (int i = 0; i < input_length; i++) {
-// 				entry->solution[i] = input[i];
-// 			}
-// 			blockContainsSolution[entry_pos] = 1;
-// 		}
-// 	}
-// }
-//
+__global__ void sha256_wordlist(hash_entry *__restrict__ entries,
+                                int entries_count, unsigned long long start,
+                                unsigned char *wordlist, unsigned short word_length) {
+	hash_entry* entry = entries + blockIdx.x;
+
+	SHA256_CTX sha_ctx;
+	u_hash_bytes digest;
+
+	sha256_init(&sha_ctx);
+	#pragma unroll
+	for (unsigned short i = 0; i < SALT_LENGTH; i++) {
+		sha_ctx.data[i] = entry->salt[i];
+	}
+	sha_ctx.datalen = SALT_LENGTH;
+
+	sha256_update(&sha_ctx, wordlist + start + (blockIdx.y * THREADS) + (threadIdx.x * word_length), word_length);
+	sha256_final(&sha_ctx, digest.hash_bytes);
+
+	if (hash_cmp_equal(digest.hash_bytes, entry->hash_bytes.hash_bytes)) {
+		for (int i = 0; i < word_length; i++) {
+			entry->solution[i] = wordlist[start + (blockIdx.y * THREADS) + (threadIdx.x * word_length) + i];
+		}
+		entry->solution[word_length] = '\0';
+	}
+}
 
 void process_after_solution_was_found(hash_entries *entries,
                                       hash_entry *d_hash_entry) {
@@ -238,8 +141,6 @@ void *launch_gpu_handler_thread(void *vargp) {
 	handler_input *hi = (handler_input *) vargp;
 	cudaSetDevice(hi->device);
 
-	cudaMemcpyToSymbol(d_charset, charset, sizeof(charset), 0, cudaMemcpyHostToDevice);
-
 	// Pre SHA-256
 	cudaMemcpyToSymbol(dev_k, host_k, sizeof(host_k), 0, cudaMemcpyHostToDevice);
 	
@@ -249,8 +150,42 @@ void *launch_gpu_handler_thread(void *vargp) {
 
 
 	#if TEST_TYPE == SEQUENTIAL_WORDLIST
+	// unsigned char* d_wordlist;
+	// cudaMalloc(&d_wordlist, sizeof(unsigned char) * hi->sequential_wordlist->character_count);
+	// cudaMemcpy(d_wordlist, hi->sequential_wordlist->words, sizeof(unsigned char) * hi->sequential_wordlist->character_count, cudaMemcpyHostToDevice);
+	// 
+	// hi->start = 0;
+	//
+	// while(1) {
+	// 	dim3 num_blocks(hi->entries.current_total, BLOCKS_PER_ENTRY, 1);
+	// 	dim3 num_threads(THREADS, 1, 1);
+	//
+	// 	sha256_sequential_wordlist<<<num_blocks, num_threads>>>(
+	// 			d_hash_entry, hi->entries.current_total, hi->start, d_wordlist
+	// 	);
+	// 	hi->start += BLOCKS_PER_ENTRY * THREADS;
+	// 	cudaDeviceSynchronize();
+	//
+	// 	cudaMemcpy(hi->entries.entries, d_hash_entry, sizeof(hash_entry) * hi->entries.current_total, cudaMemcpyDeviceToHost);
+	//
+	// 	if (contains_new_solution(&hi->entries)) {
+	// 		process_after_solution_was_found(&hi->entries, d_hash_entry);
+	// 	}
+	//
+	// 	hi->hashesProcessed += hi->entries.current_total * (MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK) * THREADS * BLOCKS_PER_ENTRY;
+	//
+	// 	if (hi->start > hi->sequential_wordlist->character_count) {
+	// 		break;
+	// 	}
+	// }
+	// hi->finished = 1;
+
+
 	unsigned char* d_wordlist;
+	unsigned char* d_wordlist2;
 	cudaMalloc(&d_wordlist, sizeof(unsigned char) * hi->sequential_wordlist->character_count);
+	cudaMalloc(&d_wordlist2, sizeof(unsigned char) * hi->sequential_wordlist->character_count);
+
 	cudaMemcpy(d_wordlist, hi->sequential_wordlist->words, sizeof(unsigned char) * hi->sequential_wordlist->character_count, cudaMemcpyHostToDevice);
 	
 	hi->start = 0;
@@ -259,10 +194,10 @@ void *launch_gpu_handler_thread(void *vargp) {
 		dim3 num_blocks(hi->entries.current_total, BLOCKS_PER_ENTRY, 1);
 		dim3 num_threads(THREADS, 1, 1);
 
-		sha256_sequential_wordlist<<<num_blocks, num_threads>>>(
-				d_hash_entry, hi->entries.current_total, hi->start, d_wordlist
+		sha256_wordlist<<<num_blocks, num_threads>>>(
+				d_hash_entry, hi->entries.current_total, hi->start, d_wordlist, hi->sequential_wordlist->word_length
 		);
-		hi->start += BLOCKS_PER_ENTRY * THREADS;
+		hi->start += BLOCKS_PER_ENTRY * THREADS * hi->sequential_wordlist->word_length;
 		cudaDeviceSynchronize();
 
 		cudaMemcpy(hi->entries.entries, d_hash_entry, sizeof(hash_entry) * hi->entries.current_total, cudaMemcpyDeviceToHost);
@@ -271,13 +206,25 @@ void *launch_gpu_handler_thread(void *vargp) {
 			process_after_solution_was_found(&hi->entries, d_hash_entry);
 		}
 
-		hi->hashesProcessed += hi->entries.current_total * (MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK) * THREADS * BLOCKS_PER_ENTRY;
+		hi->hashesProcessed += hi->entries.current_total * THREADS * BLOCKS_PER_ENTRY;
 
 		if (hi->start > hi->sequential_wordlist->character_count) {
-			break;
+			bool generated_more_words = generate_sequential_wordlist(
+					hi->sequential_wordlist,
+					MAX_SEQUENTIAL_WORDLIST_CHARS, charset,
+					CHARSET_LENGTH
+			);
+
+			if (generated_more_words) {
+				cudaMemcpy(d_wordlist, hi->sequential_wordlist->words, sizeof(unsigned char) * hi->sequential_wordlist->character_count, cudaMemcpyHostToDevice);
+				hi->start = 0;
+			} else {
+				break;
+			}
 		}
 	}
 	hi->finished = 1;
+
 
 	#elif TEST_TYPE == SEQUENTIALLY
 	// hi->start = 305000;
@@ -348,14 +295,25 @@ void *launch_gpu_handler_thread(void *vargp) {
 int main() {
 	setlocale(LC_NUMERIC, "");
 
+	sequential_wordlist wordlist;
+	create_sequential_wordlist(&wordlist, 8, charset, sizeof(charset), MAX_SEQUENTIAL_WORDLIST_CHARS);
+
+	// for (size_t i = 0; i < wordlist.words_count; i++) {
+	// 	for (int j = 0; j < wordlist.word_length; j++) {
+	// 		printf("%c", wordlist.words[(i * wordlist.word_length) + j]);
+	// 	}
+	// 	printf("\n");
+	// }
+
+
 	show_gpu_devices_info();
 
-	sequential_wordlist wordlist;
-	// read_sequential_wordlist_from_file("wordlists/rockyou_shuf.txt", &wordlist);
-	read_sequential_wordlist_from_file("wordlists/n_crackstation-human-only.txt", &wordlist);
-
-	printf("\n");
-	printf("WORDS: %lu\n SIZE (bytes): %lu\n", wordlist.words_count, wordlist.character_count * sizeof(char));
+	// sequential_wordlist wordlist;
+	// // read_sequential_wordlist_from_file("wordlists/rockyou_shuf.txt", &wordlist);
+	// read_sequential_wordlist_from_file("wordlists/n_crackstation-human-only.txt", &wordlist);
+	//
+	// printf("\n");
+	// printf("WORDS: %lu\n SIZE (bytes): %lu\n", wordlist.words_count, wordlist.character_count * sizeof(char));
 
 
 	printf("Loading hashes from the file\n\n");

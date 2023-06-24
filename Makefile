@@ -34,8 +34,8 @@ googlecolab: $(EXEC)
 
 profile: CUDA_FLAGS +=-lineinfo
 profile: $(EXEC)
-# mkdir -p $(PROFILE_DIR)
-# sudo nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
+	mkdir -p $(PROFILE_DIR)
+	sudo nsys profile -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
 # ncu --target-processes all -o $(PROFILE_DIR)/profile_`date +%Y%m%d%H%M%S` ./$(EXEC)
 
 ptx: clean
