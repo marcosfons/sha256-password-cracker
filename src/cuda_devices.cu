@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
 
-#include "cuda_devices.cuh"
+#include "cuda_devices.h"
 
 int _ConvertSMVer2Cores(int major, int minor) {
 	// Defines the number of CUDA cores per multiprocessor for different compute capabilities
@@ -44,7 +44,7 @@ int _ConvertSMVer2Cores(int major, int minor) {
 	return -1; // Unknown compute capability
 }
 
-void show_gpu_devices_info() {
+void showGPUDevicesInfo() {
 	int deviceCount;
 	cudaGetDeviceCount(&deviceCount);
 

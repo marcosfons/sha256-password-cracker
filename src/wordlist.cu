@@ -2,10 +2,11 @@
 #include <math.h>
 #include <stdbool.h>
 
-#include "hash_entry.cuh"
-#include "wordlist.cuh"
+#include "hash_entry.h"
+#include "wordlist.h"
 
-void get_input_from_number(unsigned long long current, char* input, int length, const char* charset, size_t charset_length) {
+
+void getInputFromNumber(unsigned long long current, char* input, int length, const char* charset, size_t charset_length) {
 	for (unsigned short i = 0; i < length; i++) {
 		input[i] = charset[current % charset_length];
 		current /= charset_length;
@@ -13,48 +14,48 @@ void get_input_from_number(unsigned long long current, char* input, int length, 
 	return;
 }
 
-void create_sequential_wordlist(sequential_wordlist* wordlist, int length, const char* charset, size_t charset_length, size_t max_character) {
+void createSequentialWordlist(SequentialWordlist* wordlist, int length, const char* charset, size_t charsetLength, size_t maxCharacter) {
 	wordlist->current = 0;
-	wordlist->word_length = length;
-	wordlist->words_count = pow(charset_length, length);
-	wordlist->character_count = wordlist->words_count * length;
+	wordlist->wordLength = length;
+	wordlist->wordsCount = pow(charsetLength, length);
+	wordlist->characterCount = wordlist->wordsCount * length;
 
-	if (wordlist->character_count > max_character) {
-		wordlist->character_count = (max_character / length) * length;
-		wordlist->words_count = (max_character / length);
+	if (wordlist->characterCount > maxCharacter) {
+		wordlist->characterCount = (maxCharacter / length) * length;
+		wordlist->wordsCount = (maxCharacter / length);
 	}
 
-	wordlist->words = (char*) malloc(sizeof(char) * wordlist->character_count);
+	wordlist->words = (char*) malloc(sizeof(char) * wordlist->characterCount);
 
-	for (size_t i = wordlist->current; i < wordlist->words_count; i++) {
-		get_input_from_number(i, wordlist->words + (i * length), length, charset, charset_length);
+	for (size_t i = wordlist->current; i < wordlist->wordsCount; i++) {
+		getInputFromNumber(i, wordlist->words + (i * length), length, charset, charsetLength);
 	}
 }
 
-bool generate_sequential_wordlist(sequential_wordlist* wordlist, size_t max_character, const char* charset, size_t charset_length) {
-	wordlist->current += wordlist->words_count;
-	size_t max_words = pow(charset_length, wordlist->word_length);
+bool generateSequentialWordlist(SequentialWordlist* wordlist, size_t maxCharacter, const char* charset, size_t charsetLength) {
+	wordlist->current += wordlist->wordsCount;
+	size_t max_words = pow(charsetLength, wordlist->wordLength);
 
 	if (wordlist->current >= max_words) {
 		return false;
 	}
 
-	wordlist->words_count = (max_words - wordlist->current);
-	wordlist->character_count = wordlist->words_count * wordlist->word_length;
+	wordlist->wordsCount = (max_words - wordlist->current);
+	wordlist->characterCount = wordlist->wordsCount * wordlist->wordLength;
 
-	if (wordlist->character_count > max_character) {
-		wordlist->character_count = (max_character / wordlist->word_length) * wordlist->word_length;
-		wordlist->words_count = (max_character / wordlist->word_length);
+	if (wordlist->characterCount > maxCharacter) {
+		wordlist->characterCount = (maxCharacter / wordlist->wordLength) * wordlist->wordLength;
+		wordlist->wordsCount = (maxCharacter / wordlist->wordLength);
 	}
 
-	for (size_t i = 0; i < wordlist->words_count; i++) {
-		get_input_from_number(wordlist->current + i, wordlist->words + (i * wordlist->word_length), wordlist->word_length, charset, charset_length);
+	for (size_t i = 0; i < wordlist->wordsCount; i++) {
+		getInputFromNumber(wordlist->current + i, wordlist->words + (i * wordlist->wordLength), wordlist->wordLength, charset, charsetLength);
 	}
 
 	return true;
 }
 
-void read_wordlist_from_file(const char* filepath, wordlist* wordlist) {
+void readWordlistFromFile(const char* filepath, Wordlist* wordlist) {
 	FILE* file = fopen(filepath, "r");
 	if (file == NULL) {
 		perror("Error while reading wordlist file");
@@ -63,20 +64,20 @@ void read_wordlist_from_file(const char* filepath, wordlist* wordlist) {
 
 	// Just to realloc to work. If does not do this get error realloc(): invalid pointer
 	wordlist->words = (word*) malloc(sizeof(word));
-	wordlist->words_count = 0;
+	wordlist->wordsCount = 0;
 
 	char line[100]; // Words will not be much longer than 512 chars
 	while (fgets(line, sizeof(line), file) != NULL) {
 		unsigned short length = strlen(line);
 
 		if (length > 15) {
-			wordlist->words_count += 1;
-			wordlist->words = (word*) realloc(wordlist->words, sizeof(word) * (wordlist->words_count));
+			wordlist->wordsCount += 1;
+			wordlist->words = (word*) realloc(wordlist->words, sizeof(word) * (wordlist->wordsCount));
 
-			wordlist->words[wordlist->words_count - 1].length = length;
-			wordlist->words[wordlist->words_count - 1].word = (char*) malloc(length * sizeof(char));
+			wordlist->words[wordlist->wordsCount - 1].length = length;
+			wordlist->words[wordlist->wordsCount - 1].word = (char*) malloc(length * sizeof(char));
 
-			strcpy(wordlist->words[wordlist->words_count - 1].word, line);
+			strcpy(wordlist->words[wordlist->wordsCount - 1].word, line);
 		}
 
 	}
@@ -85,7 +86,7 @@ void read_wordlist_from_file(const char* filepath, wordlist* wordlist) {
 	return;
 }
 
-void read_sequential_wordlist_from_file(const char* filepath, sequential_wordlist* wordlist) {
+void readSequentialWordlistFromFile(const char* filepath, SequentialWordlist* wordlist) {
 	FILE* file = fopen(filepath, "r");
 	if (file == NULL) {
 		perror("Error while reading sequential wordlist file");
@@ -93,23 +94,23 @@ void read_sequential_wordlist_from_file(const char* filepath, sequential_wordlis
 	}
 
 	wordlist->words = (char*) malloc(sizeof(char));
-	wordlist->words_count = 0;
-	wordlist->character_count = 0;
+	wordlist->wordsCount = 0;
+	wordlist->characterCount = 0;
 
 	char line[100]; // Words will not be much longer than 512 chars
 	while (fgets(line, sizeof(line), file) != NULL) {
 		unsigned short length = strlen(line) - 1;
 
-		wordlist->character_count += length;
-		wordlist->words_count += 1;
+		wordlist->characterCount += length;
+		wordlist->wordsCount += 1;
 
-		wordlist->words = (char*) realloc(wordlist->words, sizeof(char) * (wordlist->character_count));
+		wordlist->words = (char*) realloc(wordlist->words, sizeof(char) * (wordlist->characterCount));
 
-		strncpy(wordlist->words + wordlist->character_count - length, line, length);
+		strncpy(wordlist->words + wordlist->characterCount - length, line, length);
 	}
 
-	wordlist->words = (char*) realloc(wordlist->words, sizeof(char) * (wordlist->character_count + 1));
-	wordlist->words[wordlist->character_count] = '\0';
+	wordlist->words = (char*) realloc(wordlist->words, sizeof(char) * (wordlist->characterCount + 1));
+	wordlist->words[wordlist->characterCount] = '\0';
 
 	fclose(file);
 	return;
