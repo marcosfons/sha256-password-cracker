@@ -8,7 +8,7 @@
 void initHashEntry(HashEntry *entry, const char *user, const char *hashBytes,
                    const char *salt, const char *password) {
   strncpy(entry->username, user, USERNAME_LENGTH);
-  hexToBytes(hashBytes, entry->hashBytes, HASH_BYTES_LENGTH);
+  hexToBytes(hashBytes, entry->hashBytes.bytes, HASH_BYTES_LENGTH);
   hexToBytes(salt, entry->salt, SALT_LENGTH);
 
 	memset(entry->solution, 0, MAX_PASSWORD_LENGTH);
@@ -73,7 +73,7 @@ void printHashEntry(HashEntry entry) {
 	printf("User: %.5s  ", entry.username);
 	printf("Hash: ");
 	for (size_t i = 0; i < HASH_BYTES_LENGTH; i++) {
-		printf("%02x", entry.hashBytes[i]);
+		printf("%02x", entry.hashBytes.bytes[i]);
 	}
 	printf("  Salt: ");
 	for (size_t i = 0; i < SALT_LENGTH; i++) {
@@ -105,7 +105,7 @@ void saveHashEntriesToFile(HashEntries *entries) {
 		}
 		fprintf(file, ":");
 		for (int j = 0; j < HASH_BYTES_LENGTH; j++) {
-			fprintf(file, "%02x", entry->hashBytes[j]);
+			fprintf(file, "%02x", entry->hashBytes.bytes[j]);
 		}
 		
 		if (containsSolutionHashEntry(entry)) {

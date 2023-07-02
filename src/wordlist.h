@@ -2,35 +2,35 @@
 #define WORDLIST_H
 
 
+#include <stddef.h>
+#include <stdio.h>
+
 #include "hash_entry.h"
 
 
-typedef struct word {
-	char* word;
-	unsigned short length;
-} word;
-
-typedef struct Wordlist {
-	word* words;
-	unsigned long wordsCount;
-} wordlist;
-
 typedef struct SequentialWordlist {
+	FILE* file;
 	char* words;
-	unsigned int wordLength;
-	unsigned long long current;
 	unsigned long long wordsCount;
 	unsigned long long characterCount;
+	unsigned long long maxChunkSize;
 } sequential_wordlist;
 
+// void createSequentialWordlist(SequentialWordlist *wordlist, int length,
+//                               const char *charset, size_t charsetLength,
+//                               size_t maxSize);
+//
+// bool generateSequentialWordlist(SequentialWordlist *wordlist,
+//                                 size_t maxCharacter, const char *charset,
+//                                 size_t charsetLength);
 
+void createSequentialWordlistFromFile(SequentialWordlist *wordlist,
+                                      const char *filepath, size_t maxSize);
 
-void createSequentialWordlist(SequentialWordlist* wordlist, int length, const char* charset, size_t charset_length, size_t max_size);
-bool generateSequentialWordlist(SequentialWordlist* wordlist, size_t max_character, const char* charset, size_t charset_length);
+bool readNextChunkFromSequentialWordlist(SequentialWordlist *wordlist,
+                                         const char *charset);
 
-void readWordlistFromFile(const char* filepath, Wordlist* wordlist);
-void readSequentialWordlistFromFile(const char* filepath, SequentialWordlist* wordlist);
-
-
+void readSequentialWordlistFromFile(SequentialWordlist *wordlist,
+                                    const char *charset);
 
 #endif // WORDLIST_H

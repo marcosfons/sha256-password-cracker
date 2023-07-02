@@ -21,9 +21,15 @@
 
 
 
+typedef union u_HashBytes {
+	unsigned char bytes[HASH_BYTES_LENGTH];
+	unsigned long long hash_llu[4];
+	unsigned int hash_du[8];
+} u_HashBytes;
+
 typedef struct HashEntry {
 	char username[USERNAME_LENGTH];
-	unsigned char hashBytes[HASH_BYTES_LENGTH];
+	u_HashBytes hashBytes;
 	unsigned char salt[SALT_LENGTH];
 	char solution[MAX_PASSWORD_LENGTH];
 } HashEntry;
@@ -50,6 +56,6 @@ bool containsNewSolution(HashEntries *entries);
 
 bool containsSolutionHashEntry(HashEntry *entry);
 
-void hexToBytes(const char *hex_string, unsigned char *bytes, unsigned int len);
+void hexToBytes(const char *hexString, unsigned char *bytes, unsigned int len);
 
 #endif  // HASH_TYPES_H
