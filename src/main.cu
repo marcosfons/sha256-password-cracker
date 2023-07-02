@@ -16,7 +16,7 @@
 #define TEST_TYPE SEQUENTIALLY
 // #define TEST_TYPE RANDOMLY
 
-#define BLOCKS_PER_ENTRY 200
+#define BLOCKS_PER_ENTRY 300
 #define THREADS 1024
 #define RUNS_PER_ITERATION 1
 #define LOOPS_INSIDE_THREAD 66
@@ -26,18 +26,8 @@
 
 #define MAX_SEQUENTIAL_WORDLIST_CHARS 600000000
 
-// const char CHARSET[] = {
-//     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
-//     'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
-//     'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
-//     'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '1', '2', '3', '4',
-//     '5', '6', '7', '8', '9', '0', '%', '*', '$', '@'};
-
 const char *CHARSET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890%*$@";
-
 // const char CHARSET[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'};
-
-// const int CHARSET_LENGTH = sizeof(CHARSET) / sizeof(char);
 
 typedef struct HandlerInput {
 	unsigned long long hashesProcessed;
@@ -53,7 +43,7 @@ long long timems() {
 	return (long long) end.tv_sec * 1000 + (long long) end.tv_usec / 1000;
 }
 
-__device__ bool hashCompare(const u_HashBytes *hash1,
+__forceinline__ __device__ bool hashCompare(const u_HashBytes *hash1,
                             const u_HashBytes *hash2) {
 	#pragma unroll
 	for (unsigned short i = 0; i < HASH_BYTES_LENGTH; i++) {
@@ -75,7 +65,7 @@ __global__ void sha256SequentialWordlist(HashEntry *__restrict__ entries,
 	unsigned long long step = start + (blockIdx.y * THREADS) + threadIdx.x;
 
 	#pragma unroll
-	for (unsigned short j = MIN_PASSWORD_CHECK; j < MAX_PASSWORD_LENGTH; j++) {
+	for (unsigned short j = MIN_PASSWORD_CHECK; j < MAX_PASSWORD_LENGTH + 1; j++) {
 		sha256_init(&shaCtx);
 		#pragma unroll
 		for (unsigned short i = 0; i < SALT_LENGTH; i++) {
@@ -90,38 +80,13 @@ __global__ void sha256SequentialWordlist(HashEntry *__restrict__ entries,
 			for (int i = 0; i < j; i++) {
 				entry->solution[i] = sequentialWordlist[step + i];
 			}
-			entry->solution[j] = '\0';
+			if (j < MAX_PASSWORD_LENGTH) {
+				entry->solution[j] = '\0';
+			}
 			return;
 		}
 	}
 }
-
-// __global__ void sha256Wordlist(HashEntry *__restrict__ entries,
-//                                int entriesCount, unsigned long long start,
-//                                unsigned char *wordlist,
-//                                unsigned short wordLength) {
-// 	HashEntry* entry = entries + blockIdx.x;
-//
-// 	SHA256_CTX shaCtx;
-// 	unsigned char digest[HASH_BYTES_LENGTH];
-//
-// 	sha256_init(&shaCtx);
-// 	#pragma unroll
-// 	for (unsigned short i = 0; i < SALT_LENGTH; i++) {
-// 		shaCtx.data[i] = entry->salt[i];
-// 	}
-// 	shaCtx.datalen = SALT_LENGTH;
-//
-// 	sha256_update(&shaCtx, wordlist + start + (blockIdx.y * THREADS) + (threadIdx.x * wordLength), wordLength);
-// 	sha256_final(&shaCtx, digest);
-//
-// 	if (hashCompare(&digest, &entry->hashBytes)) {
-// 		for (int i = 0; i < wordLength; i++) {
-// 			entry->solution[i] = wordlist[start + (blockIdx.y * THREADS) + (threadIdx.x * wordLength) + i];
-// 		}
-// 		entry->solution[wordLength] = '\0';
-// 	}
-// }
 
 void processAfterSolutionWasFound(HashEntries *entries,
                                   HashEntry *d_hashEntry) {
@@ -145,6 +110,7 @@ void *launchGPUHandlerThread(void *vargp) {
 	unsigned char* d_wordlist;
 	cudaMalloc(&d_wordlist, sizeof(unsigned char) * hi->sequentialWordlist->characterCount);
 	cudaMemcpy(d_wordlist, hi->sequentialWordlist->words, sizeof(unsigned char) * hi->sequentialWordlist->characterCount, cudaMemcpyHostToDevice);
+	hi->sequentialWordlist->copied = true;
 
 	cudaEvent_t start, stop;
 	cudaEventCreate(&start);
@@ -165,8 +131,8 @@ void *launchGPUHandlerThread(void *vargp) {
 		// cudaDeviceSynchronize();
 		cudaEventSynchronize(stop);
 
-		float milliseconds = 0;
-		cudaEventElapsedTime(&milliseconds, start, stop);
+		// float milliseconds = 0;
+		// cudaEventElapsedTime(&milliseconds, start, stop);
 
 		int processed = hi->entries.currentTotal * (MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK) * THREADS * BLOCKS_PER_ENTRY;
 		// printf("Milliseconds elapsed: %f  Milliseconds per execution %f  Processed: %d\r", milliseconds, milliseconds / (processed), processed);
@@ -185,7 +151,13 @@ void *launchGPUHandlerThread(void *vargp) {
 		hi->hashesProcessed += hi->entries.currentTotal * (MAX_PASSWORD_LENGTH - MIN_PASSWORD_CHECK) * THREADS * BLOCKS_PER_ENTRY;
 
 		if (hi->start > hi->sequentialWordlist->characterCount) {
-			break;
+			hi->start = 0;
+			cudaMemcpy(d_wordlist, hi->sequentialWordlist->words, sizeof(unsigned char) * hi->sequentialWordlist->characterCount, cudaMemcpyHostToDevice);
+			printf("\nCopied to GPU\n");
+			hi->sequentialWordlist->copied = true;
+			if (hi->sequentialWordlist->finished) {
+				break;
+			}
 		}
 	}
 	hi->finished = true;
@@ -196,7 +168,7 @@ void *launchGPUHandlerThread(void *vargp) {
 }
 
 
-int main() {
+int main(int argc, char *argv[]) {
 	setlocale(LC_NUMERIC, "");
 
 	SequentialWordlist wordlist;
@@ -213,55 +185,22 @@ int main() {
 
 	srand(time(NULL));
 
-	createSequentialWordlistFromFile(&wordlist, "/mnt/wordlist/weakpass_3a", 1000000000);
+	
+
+
+	// createSequentialWordlistFromFile(&wordlist, "/mnt/wordlist/all_in_one_p", 1500000000);
+	createSequentialWordlistFromFile(&wordlist, "/mnt/wordlist/all_in_one_p", 500000000);
+	// createSequentialWordlistFromFile(&wordlist, "/mnt/wordlist/weakpass_3a", 1500000000);
+	// createSequentialWordlistFromFile(&wordlist, "wordlists/new_shuf.txt", 10000000);
+	// createSequentialWordlistFromFile(&wordlist, "/mnt/wordlist/weakpass_3a", 300000);
+	// createSequentialWordlistFromFile(&wordlist, "wordlists/n_crackstation-human-only.txt", 300);
+	// createSequentialWordlistFromFile(&wordlist, "wordlists/passwords.txt", 10000000);
 
 	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-	readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
-
-	for (int i = 0; i < wordlist.maxChunkSize; i++) {
-		printf("%c", wordlist.words[i]);
-	}
-	printf("\n");
-
-	exit(1);
-
-	return 1;
 
 	// readSequentialWordlistFromFile("/mnt/wordlist/weakpass_3a", &wordlist, CHARSET);
 	// readSequentialWordlistFromFile("wordlists/n_crackstation-human-only.txt", &wordlist, CHARSET);
 	// readSequentialWordlistFromFile("wordlists/n_crackstation-human-only.txt", &wordlist);
-	printf("\nWORDS: %llu\n SIZE (bytes): %llu\n", wordlist.wordsCount, wordlist.characterCount * sizeof(char));
-
 
 	printf("Loading hashes from the file\n\n");
 	HashEntries entries;
@@ -296,6 +235,12 @@ int main() {
 					totalProcessed, singleProcesseds, ((double) elapsed) / 1000.0,
 					(unsigned long long) ((double) totalProcessed / (double) elapsed) * 1000
 		);
+
+		if (wordlist.copied) {
+			printf("\nGetting more passwords\n");
+			readNextChunkFromSequentialWordlist(&wordlist, CHARSET);
+			printf("Got more passwords\n");
+		}
 
 		if (input.finished) {
 			break;

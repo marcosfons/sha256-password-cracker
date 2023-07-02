@@ -109,7 +109,7 @@ void saveHashEntriesToFile(HashEntries *entries) {
 		}
 		
 		if (containsSolutionHashEntry(entry)) {
-			fprintf(file, ":%s", entry->solution);
+			fprintf(file, ":%.16s", entry->solution);
 		}
 
 		fprintf(file, "\n");

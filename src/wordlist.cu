@@ -62,6 +62,8 @@ void createSequentialWordlistFromFile(SequentialWordlist *wordlist, const char *
 		return;
 	}
 
+	wordlist->copied = false;
+	wordlist->finished = false;
 	wordlist->words = (char*) malloc(maxSize * sizeof(char));
 	wordlist->wordsCount = 0;
 	wordlist->characterCount = 0;
@@ -69,93 +71,33 @@ void createSequentialWordlistFromFile(SequentialWordlist *wordlist, const char *
 }
 
 bool readNextChunkFromSequentialWordlist(SequentialWordlist* wordlist, const char* charset) {
+	wordlist->copied = false;
+
 	int charsetLength = strlen(charset);
 
-	wordlist->wordsCount = 0;
-	wordlist->characterCount = 0;
-
-	bool changed = false;
-
-	char line[5000];
-
-	// size_t ret = fread(wordlist->words, sizeof(unsigned char), wordlist->maxChunkSize, wordlist->file);
-	//
-	while (fgets(line, sizeof(line), wordlist->file) != NULL) {
-		line[strcspn(line, "\n")] = '\0';
-		unsigned int length = strlen(line);
-
-		if (length <= 0) {
-			continue;
+	size_t ret = fread(wordlist->words, sizeof(unsigned char), wordlist->maxChunkSize - 1, wordlist->file);
+	if (ret <= 1) {
+		wordlist->finished = true;
+		return false;
+	}
+	size_t j = 0;
+	for (size_t i = 0; i < ret; i++) {
+		if (wordlist->words[i] == '\n') {
+			wordlist->wordsCount += 1;
+		} else if (strchr(charset, wordlist->words[i]) == NULL || wordlist->words[i] == '\0') {
+			wordlist->words[j++] = charset[rand() % charsetLength];
+		} else {
+			wordlist->words[j++] = wordlist->words[i];
 		}
-
-		for (int i = 0; i < length; i++) {
-			if (strchr(charset, line[i]) == NULL) {
-				line[i] = charset[rand() % charsetLength];
-			}
-		}
-
-		if ((wordlist->characterCount + length) >= wordlist->maxChunkSize) {
-			printf("Filled a chunk with %llu characters\n", wordlist->maxChunkSize);
-			break;
-		}
-
-		wordlist->characterCount += length;
-		wordlist->wordsCount += 1;
-
-		strncpy(wordlist->words + wordlist->characterCount - length, line, length);
-		changed = true;
 	}
 
-	return changed;
+	for (size_t i = j; i < ret; i++) {
+		wordlist->words[i] = charset[rand() % charsetLength];
+	}
+	wordlist->characterCount = ret;
+	// TODO(marcosfons): Check this, this is totally arbitrary
+	wordlist->words[wordlist->maxChunkSize] = '\0';
+
+	return true;
 }
 
-// void readSequentialWordlistFromFile(const char* filepath, SequentialWordlist* wordlist, const char* charset) {
-// 	FILE* file = fopen(filepath, "r");
-// 	if (file == NULL) {
-// 		perror("Error while reading sequential wordlist file");
-// 		return;
-// 	}
-//
-// 	int charset_length = strlen(charset);
-//
-// 	wordlist->words = (char*) malloc(sizeof(char));
-// 	wordlist->wordsCount = 0;
-// 	wordlist->characterCount = 0;
-//
-// 	char line[1000];
-// 	while (fgets(line, sizeof(line), file) != NULL) {
-// 		if (line[0] == '\0') {
-// 			continue;
-// 		}
-// 		unsigned int length = strlen(line) - 1;
-//
-// 		if (line[length] == '\n') {
-// 			line[length] = '\0';
-// 			length -= 1;
-// 		}
-//
-// 		for (int i = 0; i < length + 1; i++) {
-// 			if (strchr(charset, line[i]) == NULL) {
-// 				line[i] = charset[rand() % charset_length];
-// 			}
-// 		}
-//
-// 		wordlist->characterCount += length;
-// 		wordlist->wordsCount += 1;
-//
-// 		wordlist->words = (char*) realloc(wordlist->words, sizeof(char) * (wordlist->characterCount));
-//
-// 		strncpy(wordlist->words + wordlist->characterCount - length, line, length);
-//
-// 		if (wordlist->characterCount > 30000000) {
-// 			printf("Passou do trem\n");
-// 			break;
-// 		}
-// 	}
-//
-// 	wordlist->words = (char*) realloc(wordlist->words, sizeof(char) * (wordlist->characterCount + 1));
-// 	wordlist->words[wordlist->characterCount] = '\0';
-//
-// 	fclose(file);
-// 	return;
-// }

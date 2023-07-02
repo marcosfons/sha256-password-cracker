@@ -11,6 +11,8 @@
 typedef struct SequentialWordlist {
 	FILE* file;
 	char* words;
+	bool copied;
+	bool finished;
 	unsigned long long wordsCount;
 	unsigned long long characterCount;
 	unsigned long long maxChunkSize;
