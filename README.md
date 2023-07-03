@@ -71,6 +71,31 @@ possibility. So was created a bunch of ways to test only likely passwords that
 could be used, for that, wordlists were used.
 
 
+## Useful links
+
+- [Intel(R) Intelligent Storage Acceleration Library Crypto Version](https://github.com/intel/isa-l_crypto/tree/master) [https://lwn.net/Articles/692605/](https://lwn.net/Articles/692605/)
+Fast implementation of `SHA256` for Intel modern processors, using parallel
+instructions using 8 lanes at the same time. In a i5-8300H achieves 1400MB/s.
+
+- [CUDA SHA256 Implementation CHINA](https://blog.csdn.net/Metal1/article/details/81322073)
+Looks like a fast implementation of `SHA256` for CUDA. It seems that is faster
+then the currently used implementation. Forces inline and has some assembly
+instructions in it.
+
+- [Cryptographic algorithm acceler aphic algorithm acceleration using CUD ation
+using CUDA enabled GPUs A enabled GPUs in typical system
+configurations](https://scholarworks.rit.edu/cgi/viewcontent.cgi?article=4203&context=theses)
+Performance overview of cryptographic algorithms including `SHA256`, both CPU
+and GPU. It concludes that CPU is faster than GPU's, but I think that is for
+single processing what is expected. For batches I expect that GPU's achieves
+better results. But needs further reading.
+
+- [https://www.ctfiot.com/100035.html](https://www.ctfiot.com/100035.html)
+
+- [https://gist.github.com/allanmac/8745837](https://gist.github.com/allanmac/8745837): Simpler but well organized of a CUDA `SHA256` implementation
+
+
+
 ## Authors
 
 - Marcos Fonseca - [marcosfons](https://github.com/marcosfons)

@@ -5,6 +5,7 @@
 
 #include "hash_entry.h"
 
+
 void initHashEntry(HashEntry *entry, const char *user, const char *hashBytes,
                    const char *salt, const char *password) {
   strncpy(entry->username, user, USERNAME_LENGTH);

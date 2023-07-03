@@ -6,17 +6,11 @@
 
 
 #define SALT_LENGTH 16
-
 #define MAX_PASSWORD_LENGTH 16
-
 #define MIN_PASSWORD_CHECK 4
-
 #define MAX_INPUT_LENGTH (SALT_LENGTH + MAX_PASSWORD_LENGTH)
-
 #define HASH_BYTES_LENGTH 32
-
 #define HASH_STRING_LENGTH 256
-
 #define USERNAME_LENGTH 5
 
 
@@ -57,5 +51,6 @@ bool containsNewSolution(HashEntries *entries);
 bool containsSolutionHashEntry(HashEntry *entry);
 
 void hexToBytes(const char *hexString, unsigned char *bytes, unsigned int len);
+
 
 #endif  // HASH_TYPES_H

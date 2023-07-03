@@ -13,26 +13,17 @@ typedef struct SequentialWordlist {
 	char* words;
 	bool copied;
 	bool finished;
-	unsigned long long wordsCount;
 	unsigned long long characterCount;
 	unsigned long long maxChunkSize;
 } sequential_wordlist;
 
-// void createSequentialWordlist(SequentialWordlist *wordlist, int length,
-//                               const char *charset, size_t charsetLength,
-//                               size_t maxSize);
-//
-// bool generateSequentialWordlist(SequentialWordlist *wordlist,
-//                                 size_t maxCharacter, const char *charset,
-//                                 size_t charsetLength);
 
-void createSequentialWordlistFromFile(SequentialWordlist *wordlist,
-                                      const char *filepath, size_t maxSize);
+void createSequentialWordlist(SequentialWordlist *wordlist, size_t maxSize);
+
+void changeSequentialWordlistFile(SequentialWordlist *wordlist,
+                                  const char *filepath);
 
 bool readNextChunkFromSequentialWordlist(SequentialWordlist *wordlist,
                                          const char *charset);
-
-void readSequentialWordlistFromFile(SequentialWordlist *wordlist,
-                                    const char *charset);
 
 #endif // WORDLIST_H

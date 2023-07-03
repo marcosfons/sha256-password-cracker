@@ -55,19 +55,28 @@
 // 	return true;
 // }
 
-void createSequentialWordlistFromFile(SequentialWordlist *wordlist, const char *filepath, size_t maxSize) {
+void createSequentialWordlist(SequentialWordlist *wordlist, size_t maxSize) {
+	wordlist->file = NULL;
+	wordlist->copied = false;
+	wordlist->finished = false;
+	wordlist->words = (char*) malloc(maxSize * sizeof(char));
+	wordlist->characterCount = 0;
+	wordlist->maxChunkSize = maxSize;
+}
+
+void changeSequentialWordlistFile(SequentialWordlist *wordlist, const char *filepath) {
+	if (wordlist->file != NULL) {
+		fclose(wordlist->file);
+		wordlist->file = NULL;
+	}
+
 	wordlist->file = fopen(filepath, "r");
 	if (wordlist->file == NULL) {
 		perror("Error while opening sequential wordlist file");
 		return;
 	}
 
-	wordlist->copied = false;
 	wordlist->finished = false;
-	wordlist->words = (char*) malloc(maxSize * sizeof(char));
-	wordlist->wordsCount = 0;
-	wordlist->characterCount = 0;
-	wordlist->maxChunkSize = maxSize;
 }
 
 bool readNextChunkFromSequentialWordlist(SequentialWordlist* wordlist, const char* charset) {
@@ -82,8 +91,8 @@ bool readNextChunkFromSequentialWordlist(SequentialWordlist* wordlist, const cha
 	}
 	size_t j = 0;
 	for (size_t i = 0; i < ret; i++) {
+		// TODO(marcosfons): Remove this unnecessary if
 		if (wordlist->words[i] == '\n') {
-			wordlist->wordsCount += 1;
 		} else if (strchr(charset, wordlist->words[i]) == NULL || wordlist->words[i] == '\0') {
 			wordlist->words[j++] = charset[rand() % charsetLength];
 		} else {
@@ -95,8 +104,6 @@ bool readNextChunkFromSequentialWordlist(SequentialWordlist* wordlist, const cha
 		wordlist->words[i] = charset[rand() % charsetLength];
 	}
 	wordlist->characterCount = ret;
-	// TODO(marcosfons): Check this, this is totally arbitrary
-	wordlist->words[wordlist->maxChunkSize] = '\0';
 
 	return true;
 }

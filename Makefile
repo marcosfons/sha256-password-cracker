@@ -20,7 +20,7 @@ EXEC := sha256-password-cracker
 all: $(EXEC)
 
 $(EXEC): $(OBJS)
-	$(CC) -O 3 $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) $(LIB_DIRS) -o $@ $^ $(LIBS)
+	$(CC) -O 2 $(CFLAGS) $(CUDA_FLAGS) $(INC_DIRS) $(LIB_DIRS) -o $@ $^ $(LIBS)
 
 $(OBJ_DIR)/%.o: src/%.cu $(HDRS)
 	@mkdir -p $(@D)
